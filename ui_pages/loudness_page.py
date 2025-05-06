@@ -1,7 +1,7 @@
 """
 ラウドネス補正ページUI
 """
-from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QFileDialog, QTableWidget, QTableWidgetItem, QAbstractItemView, QHeaderView, QCheckBox
+from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QFileDialog, QTableWidget, QTableWidgetItem, QAbstractItemView, QHeaderView, QCheckBox, QLineEdit
 from PySide6.QtCore import Qt, QEvent, Signal, QObject
 from pathlib import Path
 from core.file_scanner import scan_video_files
@@ -50,6 +50,21 @@ class LoudnessPage(QWidget):
         self.chk_material.setToolTip("編集素材用途向け。音質を最大限維持しつつ全クリップの音量を均一化します。ラウドネス-23LUFS/ピーク-1dBTPで揃えます。")
         self.chk_material.setChecked(False)
         layout.addWidget(self.chk_material)
+        # 書き出しフォルダ選択UI
+        folder_layout = QHBoxLayout()
+        self.edit_outdir = QLineEdit()
+        self.edit_outdir.setReadOnly(True)
+        self.edit_outdir.setPlaceholderText("未選択（素材と同じフォルダに書き出し）")
+        btn_select_dir = QPushButton("書き出しフォルダ選択")
+        btn_reset_dir = QPushButton("リセット")
+        folder_layout.addWidget(QLabel("書き出し先:"))
+        folder_layout.addWidget(self.edit_outdir)
+        folder_layout.addWidget(btn_select_dir)
+        folder_layout.addWidget(btn_reset_dir)
+        layout.addLayout(folder_layout)
+        self.output_dir = None
+        btn_select_dir.clicked.connect(self.select_output_dir)
+        btn_reset_dir.clicked.connect(self.reset_output_dir)
         # 実行ボタン（右下揃えのためのレイアウト調整）
         btn_layout = QHBoxLayout()
         btn_layout.addStretch()
@@ -85,6 +100,16 @@ class LoudnessPage(QWidget):
     def add_files(self, files):
         self.file_select.add_files(files)
 
+    def select_output_dir(self):
+        dir_path = QFileDialog.getExistingDirectory(self, "書き出しフォルダを選択")
+        if dir_path:
+            self.output_dir = dir_path
+            self.edit_outdir.setText(dir_path)
+
+    def reset_output_dir(self):
+        self.output_dir = None
+        self.edit_outdir.clear()
+
     def run_loudness(self):
         use_dynaudnorm = self.chk_dynaudnorm.isChecked() and not self.chk_material.isChecked()
         material_mode = self.chk_material.isChecked()
@@ -93,7 +118,10 @@ class LoudnessPage(QWidget):
                 row = self.status_map[file_path]
                 self.update_status.emit(row, "実行中")
                 input_path = Path(file_path)
-                output_path = input_path.with_name(input_path.stem + ("_mat-23LUFS" if material_mode else "_norm-14LUFS") + input_path.suffix)
+                # 出力先決定
+                out_dir = Path(self.output_dir) if self.output_dir else input_path.parent
+                out_name = input_path.stem + ("_mat-23LUFS" if material_mode else "_norm-14LUFS") + input_path.suffix
+                output_path = out_dir / out_name
                 cmd = CommandBuilder.build_loudness_normalization_cmd(
                     input_path, output_path, use_dynaudnorm=use_dynaudnorm, material_mode=material_mode)
                 def log_callback(line):
