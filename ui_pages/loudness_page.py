@@ -1,7 +1,7 @@
 """
 ラウドネス補正ページUI
 """
-from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QFileDialog, QTableWidget, QTableWidgetItem, QTextEdit, QAbstractItemView, QHeaderView
+from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QFileDialog, QTableWidget, QTableWidgetItem, QTextEdit, QAbstractItemView, QHeaderView, QCheckBox
 from PySide6.QtCore import Qt, QEvent, Signal, QObject
 from pathlib import Path
 from core.file_scanner import scan_video_files
@@ -44,6 +44,10 @@ class LoudnessPage(QWidget):
             QTableWidget::item { padding-left: 4px; padding-right: 4px; }
         """)
         layout.addWidget(self.table)
+        # dynaudnorm有効チェックボックス
+        self.chk_dynaudnorm = QCheckBox("dynaudnorm（自動音量均一化）を有効にする")
+        self.chk_dynaudnorm.setChecked(False)
+        layout.addWidget(self.chk_dynaudnorm)
         # 実行ボタン
         btn_run = QPushButton("ラウドネス補正を実行")
         btn_run.clicked.connect(self.run_loudness)
@@ -100,13 +104,14 @@ class LoudnessPage(QWidget):
         self.add_files(files)
 
     def run_loudness(self):
+        use_dynaudnorm = self.chk_dynaudnorm.isChecked()
         def task():
             for idx, file_path in enumerate(self.file_paths):
                 row = self.status_map[file_path]
                 self.update_status.emit(row, "実行中")
                 input_path = Path(file_path)
                 output_path = input_path.with_name(input_path.stem + "_norm-14LUFS" + input_path.suffix)
-                cmd = CommandBuilder.build_loudness_normalization_cmd(input_path, output_path)
+                cmd = CommandBuilder.build_loudness_normalization_cmd(input_path, output_path, use_dynaudnorm=use_dynaudnorm)
                 def log_callback(line):
                     self.update_log.emit(row, line)
                     self.append_logbox.emit(line)
