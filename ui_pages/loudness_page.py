@@ -45,6 +45,11 @@ class LoudnessPage(QWidget):
         self.chk_dynaudnorm = QCheckBox("dynaudnorm（自動音量均一化）を有効にする")
         self.chk_dynaudnorm.setChecked(False)
         layout.addWidget(self.chk_dynaudnorm)
+        # 素材用最適化チェックボックス
+        self.chk_material = QCheckBox("素材用に最適化（-23LUFS/音質優先/均一化）")
+        self.chk_material.setToolTip("編集素材用途向け。音質を最大限維持しつつ全クリップの音量を均一化します。ラウドネス-23LUFS/ピーク-1dBTPで揃えます。")
+        self.chk_material.setChecked(False)
+        layout.addWidget(self.chk_material)
         # 実行ボタン（右下揃えのためのレイアウト調整）
         btn_layout = QHBoxLayout()
         btn_layout.addStretch()
@@ -81,14 +86,16 @@ class LoudnessPage(QWidget):
         self.file_select.add_files(files)
 
     def run_loudness(self):
-        use_dynaudnorm = self.chk_dynaudnorm.isChecked()
+        use_dynaudnorm = self.chk_dynaudnorm.isChecked() and not self.chk_material.isChecked()
+        material_mode = self.chk_material.isChecked()
         def task():
             for idx, file_path in enumerate(self.file_paths):
                 row = self.status_map[file_path]
                 self.update_status.emit(row, "実行中")
                 input_path = Path(file_path)
-                output_path = input_path.with_name(input_path.stem + "_norm-14LUFS" + input_path.suffix)
-                cmd = CommandBuilder.build_loudness_normalization_cmd(input_path, output_path, use_dynaudnorm=use_dynaudnorm)
+                output_path = input_path.with_name(input_path.stem + ("_mat-23LUFS" if material_mode else "_norm-14LUFS") + input_path.suffix)
+                cmd = CommandBuilder.build_loudness_normalization_cmd(
+                    input_path, output_path, use_dynaudnorm=use_dynaudnorm, material_mode=material_mode)
                 def log_callback(line):
                     self.update_log.emit(row, line)
                     self.append_logbox.emit(line)
