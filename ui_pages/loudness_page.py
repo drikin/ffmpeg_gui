@@ -120,6 +120,16 @@ class LoudnessPage(QWidget):
         self.output_dir = None
         self.edit_outdir.clear()
 
+    def reset_file_list(self):
+        if hasattr(self, 'file_select'):
+            self.file_select.clear()
+        if hasattr(self, 'list_files'):
+            self.list_files.clear()
+        if hasattr(self, 'table'):
+            self.table.setRowCount(0)
+        if hasattr(self, 'file_paths'):
+            self.file_paths = []
+
     def run_loudness(self):
         use_dynaudnorm = self.chk_dynaudnorm.isChecked() and not self.chk_material.isChecked()
         material_mode = self.chk_material.isChecked()

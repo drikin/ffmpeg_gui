@@ -39,6 +39,12 @@ class FileSelectWidget(QWidget):
         self.file_paths = []
         self.files_changed.emit(self.file_paths)
 
+    def clear(self):
+        if hasattr(self, 'list_widget'):
+            self.list_widget.clear()
+        if hasattr(self, 'file_paths'):
+            self.file_paths = []
+
     def dragEnterEvent(self, event):
         # ファイル追加ボタン上でのドラッグ時は無視
         if self.btn_select.underMouse():

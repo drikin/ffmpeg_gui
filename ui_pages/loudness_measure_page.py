@@ -64,6 +64,14 @@ class LoudnessMeasurePage(QWidget):
     def add_files(self, files):
         self.file_select.add_files(files)
 
+    def reset_file_list(self):
+        if hasattr(self, 'file_select'):
+            self.file_select.clear()
+        if hasattr(self, 'table'):
+            self.table.setRowCount(0)
+        self.file_paths = []
+        self.status_map = {}
+
     def run_measure(self):
         def task():
             for file_path in self.file_paths:

@@ -93,3 +93,12 @@ class VideoConcatPage(QWidget):
             if str(f) not in current:
                 self.list_files.addItem(str(f))
         self.update_file_list([self.list_files.item(i).text() for i in range(self.list_files.count())])
+    def reset_file_list(self):
+        if hasattr(self, 'file_select'):
+            self.file_select.clear()
+        if hasattr(self, 'list_files'):
+            self.list_files.clear()
+        if hasattr(self, 'preview_label'):
+            self.preview_label.clear()
+        if hasattr(self, 'file_paths'):
+            self.file_paths = []

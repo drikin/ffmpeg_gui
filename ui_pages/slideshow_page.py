@@ -1,4 +1,6 @@
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QLabel, QPushButton, QMessageBox, QListWidget, QComboBox, QCheckBox
+from PySide6.QtGui import QPixmap
+from PySide6.QtCore import Qt
 from ui_parts.file_select_widget import FileSelectWidget
 from ui_parts.log_console_widget import LogConsoleWidget
 from core.slideshow_builder import SlideshowBuilder
@@ -16,7 +18,15 @@ class SlideshowPage(QWidget):
         layout.addWidget(self.file_select)
         # ファイルリスト
         self.list_files = QListWidget()
+        self.list_files.setSelectionMode(QListWidget.ExtendedSelection)
+        self.list_files.setDragDropMode(QListWidget.InternalMove)  # 並べ替え可能に
+        self.list_files.currentItemChanged.connect(self.preview_selected_image)
         layout.addWidget(self.list_files)
+        # プレビュー用ラベル
+        self.preview_label = QLabel()
+        self.preview_label.setFixedHeight(220)
+        self.preview_label.setAlignment(Qt.AlignCenter)
+        layout.addWidget(self.preview_label)
         # SE選択コンボボックス
         self.se_combo = QComboBox()
         self.se_combo.addItem("SEなし", "")
@@ -51,6 +61,22 @@ class SlideshowPage(QWidget):
         self.list_files.clear()
         for f in files:
             self.list_files.addItem(str(f))
+
+    def reset_file_list(self):
+        self.list_files.clear()
+        self.preview_label.clear()
+
+    def preview_selected_image(self, current, previous):
+        if current is None:
+            self.preview_label.clear()
+            return
+        path = current.text()
+        pixmap = QPixmap(path)
+        if not pixmap.isNull():
+            scaled = pixmap.scaledToHeight(200, Qt.SmoothTransformation)
+            self.preview_label.setPixmap(scaled)
+        else:
+            self.preview_label.setText("画像プレビュー不可")
 
     def on_generate_slideshow(self):
         file_list = [self.list_files.item(i).text() for i in range(self.list_files.count())]

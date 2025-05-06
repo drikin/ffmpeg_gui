@@ -26,12 +26,17 @@ class MainWindow(QMainWindow):
         self.btn_measure = QPushButton("ラウドネス測定")
         self.btn_measure.setObjectName("btn_measure")
         sidebar.addWidget(self.btn_measure)
-        self.btn_concat = QPushButton("動画結合")
-        self.btn_concat.setObjectName("btn_concat")
-        sidebar.addWidget(self.btn_concat)
         self.btn_slideshow = QPushButton("スライドショー生成")
         self.btn_slideshow.setObjectName("btn_slideshow")
         sidebar.addWidget(self.btn_slideshow)
+        self.btn_concat = QPushButton("動画結合")
+        self.btn_concat.setObjectName("btn_concat")
+        sidebar.addWidget(self.btn_concat)
+        # グローバルリセットボタン
+        self.btn_reset = QPushButton("全リセット")
+        self.btn_reset.setObjectName("btn_reset")
+        self.btn_reset.clicked.connect(self.reset_all_file_lists)
+        sidebar.addWidget(self.btn_reset)
         sidebar.addStretch()
         # スタックページ
         self.stack = QStackedWidget()
@@ -62,6 +67,17 @@ class MainWindow(QMainWindow):
             QPushButton { background: #44475a; color: #f8f8f2; border-radius: 6px; padding: 8px; }
             QPushButton:hover { background: #6272a4; }
         """)
+
+    def reset_all_file_lists(self):
+        # 各ページのファイルリストをリセット
+        if hasattr(self, 'slideshow_page'):
+            self.slideshow_page.reset_file_list()
+        if hasattr(self, 'loudness_page'):
+            self.loudness_page.reset_file_list()
+        if hasattr(self, 'video_concat_page'):
+            self.video_concat_page.reset_file_list()
+        if hasattr(self, 'loudness_measure_page'):
+            self.loudness_measure_page.reset_file_list()
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
