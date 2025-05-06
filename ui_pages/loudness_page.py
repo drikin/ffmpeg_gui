@@ -21,8 +21,9 @@ class LoudnessPage(QWidget):
     update_log = Signal(int, str)
     append_logbox = Signal(str)
 
-    def __init__(self):
+    def __init__(self, concat_page=None):
         super().__init__()
+        self.concat_page = concat_page
         self.setAcceptDrops(True)
         layout = QVBoxLayout(self)
         self.file_paths = []  # ファイルリストをインスタンス変数で管理
@@ -124,18 +125,23 @@ class LoudnessPage(QWidget):
         material_mode = self.chk_material.isChecked()
         def parse_loudnorm_summary(log_lines):
             summary = {}
+            def safe_float(val):
+                try:
+                    return float(val)
+                except Exception:
+                    return None
             for line in log_lines:
                 # ピーク値やLUFSなどを抽出
                 if m := re.match(r"\s*Input Integrated:\s*([\-\d\.]+)", line):
-                    summary['input_lufs'] = float(m.group(1))
+                    summary['input_lufs'] = safe_float(m.group(1))
                 elif m := re.match(r"\s*Input True Peak:\s*([\-\d\.]+)", line):
-                    summary['input_tp'] = float(m.group(1))
+                    summary['input_tp'] = safe_float(m.group(1))
                 elif m := re.match(r"\s*Output Integrated:\s*([\-\d\.]+)", line):
-                    summary['output_lufs'] = float(m.group(1))
+                    summary['output_lufs'] = safe_float(m.group(1))
                 elif m := re.match(r"\s*Output True Peak:\s*([\-\d\.]+)", line):
-                    summary['output_tp'] = float(m.group(1))
+                    summary['output_tp'] = safe_float(m.group(1))
                 elif m := re.match(r"\s*Output LRA:\s*([\-\d\.]+)", line):
-                    summary['output_lra'] = float(m.group(1))
+                    summary['output_lra'] = safe_float(m.group(1))
                 elif 'WARNING' in line.upper() or 'clipping' in line.lower():
                     summary['warning'] = line.strip()
             return summary
@@ -173,7 +179,9 @@ class LoudnessPage(QWidget):
                 detail = f"出力LUFS: {summary.get('output_lufs','')} / Peak: {summary.get('output_tp','')}dBTP / LRA: {summary.get('output_lra','')}"
                 self.update_log.emit(row, detail)
                 if ret == 0:
-                    pass
+                    # 補正後ファイルを動画結合タブに自動追加（Signal経由でUIスレッドにディスパッチ）
+                    if self.concat_page is not None:
+                        self.concat_page.add_files_signal.emit([str(output_path)])
                 else:
                     fail_item = QTableWidgetItem("失敗")
                     fail_item.setForeground(QColor("red"))

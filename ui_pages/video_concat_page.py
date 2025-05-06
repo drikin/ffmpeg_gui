@@ -5,10 +5,11 @@ from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QL
 from ui_parts.file_select_widget import FileSelectWidget
 from ui_parts.external_storage_file_adder import ExternalStorageFileAdder
 from ui_parts.log_console_widget import LogConsoleWidget
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, Signal
 from pathlib import Path
 
 class VideoConcatPage(QWidget):
+    add_files_signal = Signal(list)
     def __init__(self):
         super().__init__()
         layout = QVBoxLayout(self)
@@ -41,6 +42,7 @@ class VideoConcatPage(QWidget):
         self.log_console = LogConsoleWidget()
         layout.addWidget(self.log_console)
         self.btn_run.clicked.connect(self.run_concat)
+        self.add_files_signal.connect(self.add_files)
     def select_outdir(self):
         dir_path = QFileDialog.getExistingDirectory(self, "保存先フォルダを選択")
         if dir_path:
@@ -60,7 +62,7 @@ class VideoConcatPage(QWidget):
             if force_reason:
                 self.log_console.append(f"[INFO] {force_reason}")
             elif need_reencode:
-                self.log_console.append("[INFO] 異なるフォーマットの動画が混在しているため再エンコードして結合します（HWエンコード:h264_videotoolbox）")
+                self.log_console.append("[INFO] 異なるフォーマットの動画が混在していて再エンコードして結合します（HWエンコード:h264_videotoolbox）")
             else:
                 self.log_console.append("[INFO] 全て同一フォーマットのため再エンコードなしで結合します (-c copy)")
             self.log_console.append(f"結合コマンド実行: {' '.join(cmd)}")
@@ -81,3 +83,13 @@ class VideoConcatPage(QWidget):
         self.list_files.clear()
         for f in files:
             self.list_files.addItem(str(f))
+    def add_files(self, files):
+        """
+        ファイルリストに新規ファイルを追加し、UIを更新
+        """
+        current = [self.list_files.item(i).text() for i in range(self.list_files.count())]
+        # 重複を避けて追加
+        for f in files:
+            if str(f) not in current:
+                self.list_files.addItem(str(f))
+        self.update_file_list([self.list_files.item(i).text() for i in range(self.list_files.count())])

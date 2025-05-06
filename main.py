@@ -31,11 +31,11 @@ class MainWindow(QMainWindow):
         sidebar.addStretch()
         # スタックページ
         self.stack = QStackedWidget()
-        self.loudness_page = LoudnessPage()
+        self.video_concat_page = VideoConcatPage()
+        self.loudness_page = LoudnessPage(concat_page=self.video_concat_page)
         self.stack.addWidget(self.loudness_page)
         self.loudness_measure_page = LoudnessMeasurePage()
         self.stack.addWidget(self.loudness_measure_page)
-        self.video_concat_page = VideoConcatPage()
         self.stack.addWidget(self.video_concat_page)
         # レイアウト結合
         main_layout.addLayout(sidebar, 1)
