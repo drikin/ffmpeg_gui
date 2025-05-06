@@ -6,6 +6,7 @@ import sys
 from PySide6.QtWidgets import QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QStackedWidget, QLabel
 from PySide6.QtCore import Qt
 from ui_pages.loudness_page import LoudnessPage
+from ui_pages.loudness_measure_page import LoudnessMeasurePage
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -20,17 +21,23 @@ class MainWindow(QMainWindow):
         self.btn_loudness = QPushButton("Loudness Normalization")
         self.btn_loudness.setObjectName("btn_loudness")
         sidebar.addWidget(self.btn_loudness)
+        self.btn_measure = QPushButton("Loudness Measure")
+        self.btn_measure.setObjectName("btn_measure")
+        sidebar.addWidget(self.btn_measure)
         sidebar.addStretch()
         # スタックページ
         self.stack = QStackedWidget()
         self.loudness_page = LoudnessPage()
         self.stack.addWidget(self.loudness_page)
+        self.loudness_measure_page = LoudnessMeasurePage()
+        self.stack.addWidget(self.loudness_measure_page)
         # レイアウト結合
         main_layout.addLayout(sidebar, 1)
         main_layout.addWidget(self.stack, 6)
         self.setCentralWidget(central_widget)
         # イベント接続
         self.btn_loudness.clicked.connect(lambda: self.stack.setCurrentWidget(self.loudness_page))
+        self.btn_measure.clicked.connect(lambda: self.stack.setCurrentWidget(self.loudness_measure_page))
         # Draculaテーマ適用（必要ならQSSを読み込み）
         self.apply_dracula_theme()
 

@@ -8,6 +8,7 @@ from core.file_scanner import scan_video_files
 from core.command_builder import CommandBuilder
 from core.executor import Executor
 import threading
+from ui_parts.file_select_widget import FileSelectWidget
 
 class LoudnessPage(QWidget):
     # Signal定義
@@ -19,15 +20,10 @@ class LoudnessPage(QWidget):
         super().__init__()
         self.setAcceptDrops(True)
         layout = QVBoxLayout(self)
-        # ファイル追加ボタン
-        btn_select = QPushButton("ファイル追加")
-        btn_select.clicked.connect(self.select_files)
-        layout.addWidget(btn_select)
-        # ドラッグ&ドロップ領域
-        self.drop_label = QLabel("ここに動画ファイルまたはフォルダーをドロップ")
-        self.drop_label.setStyleSheet("border: 2px dashed #6272a4; padding: 24px; margin: 8px;")
-        self.drop_label.setAlignment(Qt.AlignCenter)
-        layout.addWidget(self.drop_label)
+        # ファイル選択ウィジェット（共通化）
+        self.file_select = FileSelectWidget()
+        self.file_select.files_changed.connect(self.on_files_changed)
+        layout.addWidget(self.file_select)
         # ファイルリスト
         self.table = QTableWidget(0, 3)
         self.table.setHorizontalHeaderLabels(["ファイル名", "状態", "ログ"])
@@ -56,9 +52,7 @@ class LoudnessPage(QWidget):
         self.log_box = QTextEdit()
         self.log_box.setReadOnly(True)
         layout.addWidget(self.log_box)
-        # ファイルリスト管理
-        self.file_paths = []
-        self.status_map = {}
+        # ファイルリスト管理はfile_selectに一元化
         # Signal接続
         self.update_status.connect(self._update_status)
         self.update_log.connect(self._update_log)
@@ -69,39 +63,19 @@ class LoudnessPage(QWidget):
     def _update_log(self, row: int, log: str):
         self.table.setItem(row, 2, QTableWidgetItem(log[-80:]))
 
-    def select_files(self):
-        files, _ = QFileDialog.getOpenFileNames(self, "動画ファイルを選択", "", "動画ファイル (*.mp4 *.mov *.mkv)")
-        self.add_files([Path(f) for f in files])
+    def on_files_changed(self, file_paths):
+        self.file_paths = file_paths
+        self.status_map = {f: i for i, f in enumerate(self.file_paths)}
+        self.table.setRowCount(len(self.file_paths))
+        for i, f in enumerate(self.file_paths):
+            self.table.setItem(i, 0, QTableWidgetItem(Path(f).name))
+            self.table.setItem(i, 1, QTableWidgetItem("未処理"))
 
-    def add_files_from_folder(self, folder):
-        files = scan_video_files(Path(folder))
-        self.add_files(files)
+    def select_files(self):
+        self.file_select.select_files()
 
     def add_files(self, files):
-        for f in files:
-            if str(f) not in self.file_paths:
-                row = self.table.rowCount()
-                self.table.insertRow(row)
-                self.table.setItem(row, 0, QTableWidgetItem(str(f.name)))
-                self.table.setItem(row, 1, QTableWidgetItem("未処理"))
-                self.table.setItem(row, 2, QTableWidgetItem(""))
-                self.file_paths.append(str(f))
-                self.status_map[str(f)] = row
-
-    def dragEnterEvent(self, event):
-        if event.mimeData().hasUrls():
-            event.acceptProposedAction()
-
-    def dropEvent(self, event):
-        files = []
-        for url in event.mimeData().urls():
-            path = Path(url.toLocalFile())
-            if path.is_dir():
-                files.extend(scan_video_files(path))
-            elif path.is_file():
-                if path.suffix.lower() in {'.mp4', '.mov', '.mkv'}:
-                    files.append(path)
-        self.add_files(files)
+        self.file_select.add_files(files)
 
     def run_loudness(self):
         use_dynaudnorm = self.chk_dynaudnorm.isChecked()

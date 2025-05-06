@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="512" height="512" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect width="512" height="512" rx="96" fill="#222"/>
+  <!-- ffmpeg風の三角形 -->
+  <polygon points="120,256 240,120 240,392" fill="#21C25E"/>
+  <!-- ラウドネスメーター風バー -->
+  <rect x="280" y="180" width="32" height="152" rx="8" fill="#fff"/>
+  <rect x="328" y="220" width="32" height="112" rx="8" fill="#21C25E"/>
+  <rect x="376" y="260" width="32" height="72" rx="8" fill="#F7C325"/>
+  <!-- 波形イメージの曲線 -->
+  <path d="M120 340 Q180 320 240 340 T360 340" stroke="#fff" stroke-width="8" fill="none"/>
+</svg>
