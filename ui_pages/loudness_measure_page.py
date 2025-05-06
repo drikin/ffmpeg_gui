@@ -8,6 +8,7 @@ from core.ffprobe_loudness import FFprobeLoudness
 import threading
 from ui_parts.file_select_widget import FileSelectWidget
 from ui_parts.log_console_widget import LogConsoleWidget
+from ui_parts.external_storage_file_adder import ExternalStorageFileAdder
 
 class LoudnessMeasurePage(QWidget):
     def __init__(self):
@@ -17,6 +18,10 @@ class LoudnessMeasurePage(QWidget):
         self.file_select = FileSelectWidget()
         self.file_select.files_changed.connect(self.on_files_changed)
         layout.addWidget(self.file_select)
+        # 外部ストレージファイル追加ウィジェット（共通化）
+        self.ext_storage_adder = ExternalStorageFileAdder(self)
+        self.ext_storage_adder.files_found.connect(self.file_select.add_files)
+        layout.addWidget(self.ext_storage_adder)
         # ファイルリスト
         self.table = QTableWidget(0, 5)
         self.table.setHorizontalHeaderLabels(["ファイル名", "Integrated (LUFS)", "True Peak (dB)", "LRA", "ログ"])
