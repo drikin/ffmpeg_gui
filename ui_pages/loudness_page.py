@@ -1,7 +1,7 @@
 """
 ラウドネス補正ページUI
 """
-from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QFileDialog, QTableWidget, QTableWidgetItem, QTextEdit, QAbstractItemView, QHeaderView, QCheckBox
+from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QFileDialog, QTableWidget, QTableWidgetItem, QAbstractItemView, QHeaderView, QCheckBox
 from PySide6.QtCore import Qt, QEvent, Signal, QObject
 from pathlib import Path
 from core.file_scanner import scan_video_files
@@ -9,6 +9,7 @@ from core.command_builder import CommandBuilder
 from core.executor import Executor
 import threading
 from ui_parts.file_select_widget import FileSelectWidget
+from ui_parts.log_console_widget import LogConsoleWidget
 
 class LoudnessPage(QWidget):
     # Signal定義
@@ -44,19 +45,21 @@ class LoudnessPage(QWidget):
         self.chk_dynaudnorm = QCheckBox("dynaudnorm（自動音量均一化）を有効にする")
         self.chk_dynaudnorm.setChecked(False)
         layout.addWidget(self.chk_dynaudnorm)
-        # 実行ボタン
+        # 実行ボタン（右下揃えのためのレイアウト調整）
+        btn_layout = QHBoxLayout()
+        btn_layout.addStretch()
         btn_run = QPushButton("ラウドネス補正を実行")
         btn_run.clicked.connect(self.run_loudness)
-        layout.addWidget(btn_run)
-        # ログ表示欄
-        self.log_box = QTextEdit()
-        self.log_box.setReadOnly(True)
-        layout.addWidget(self.log_box)
+        btn_layout.addWidget(btn_run)
+        layout.addLayout(btn_layout)
+        # ログ表示欄（共通ウィジェット化）
+        self.log_console = LogConsoleWidget()
+        layout.addWidget(self.log_console)
         # ファイルリスト管理はfile_selectに一元化
         # Signal接続
         self.update_status.connect(self._update_status)
         self.update_log.connect(self._update_log)
-        self.append_logbox.connect(self.log_box.append)
+        self.append_logbox.connect(self.log_console.append)
 
     def _update_status(self, row: int, status: str):
         self.table.setItem(row, 1, QTableWidgetItem(status))

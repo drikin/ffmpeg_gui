@@ -7,6 +7,7 @@ from pathlib import Path
 from core.ffprobe_loudness import FFprobeLoudness
 import threading
 from ui_parts.file_select_widget import FileSelectWidget
+from ui_parts.log_console_widget import LogConsoleWidget
 
 class LoudnessMeasurePage(QWidget):
     def __init__(self):
@@ -33,10 +34,13 @@ class LoudnessMeasurePage(QWidget):
         btn_run = QPushButton("ラウドネス測定を実行")
         btn_run.clicked.connect(self.run_measure)
         layout.addWidget(btn_run)
+        # ログ表示欄（共通ウィジェット化）
+        self.log_console = LogConsoleWidget()
+        layout.addWidget(self.log_console)
         # ファイルリスト管理はfile_selectに一元化
         self.status_map = {}
         # ドラッグ&ドロップ有効化
-        self.setAcceptDrops(True)
+        # self.setAcceptDrops(True)
 
     def on_files_changed(self, file_paths):
         self.file_paths = file_paths
@@ -60,25 +64,15 @@ class LoudnessMeasurePage(QWidget):
             for file_path in self.file_paths:
                 row = self.status_map[file_path]
                 self.table.setItem(row, 4, QTableWidgetItem("実行中"))
+                self.log_console.append(f"[実行開始] {file_path}")
                 result = FFprobeLoudness.measure_loudness(Path(file_path))
                 if result:
                     self.table.setItem(row, 1, QTableWidgetItem(str(result.get("input_i", "-"))))
                     self.table.setItem(row, 2, QTableWidgetItem(str(result.get("input_tp", "-"))))
                     self.table.setItem(row, 3, QTableWidgetItem(str(result.get("input_lra", "-"))))
                     self.table.setItem(row, 4, QTableWidgetItem("成功"))
+                    self.log_console.append(f"[成功] {file_path}")
                 else:
                     self.table.setItem(row, 4, QTableWidgetItem("失敗"))
+                    self.log_console.append(f"[失敗] {file_path}")
         threading.Thread(target=task, daemon=True).start()
-
-    def dragEnterEvent(self, event):
-        if event.mimeData().hasUrls():
-            event.acceptProposedAction()
-
-    def dropEvent(self, event):
-        files = []
-        for url in event.mimeData().urls():
-            path = url.toLocalFile()
-            if path.lower().endswith((".mp4", ".mov", ".mkv", ".wav", ".aac", ".mp3")):
-                files.append(Path(path))
-        if files:
-            self.add_files(files)
