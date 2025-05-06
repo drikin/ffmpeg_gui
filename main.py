@@ -7,6 +7,7 @@ from PySide6.QtWidgets import QApplication, QMainWindow, QWidget, QVBoxLayout, Q
 from PySide6.QtCore import Qt
 from ui_pages.loudness_page import LoudnessPage
 from ui_pages.loudness_measure_page import LoudnessMeasurePage
+from ui_pages.video_concat_page import VideoConcatPage
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -24,6 +25,9 @@ class MainWindow(QMainWindow):
         self.btn_measure = QPushButton("Loudness Measure")
         self.btn_measure.setObjectName("btn_measure")
         sidebar.addWidget(self.btn_measure)
+        self.btn_concat = QPushButton("動画結合")
+        self.btn_concat.setObjectName("btn_concat")
+        sidebar.addWidget(self.btn_concat)
         sidebar.addStretch()
         # スタックページ
         self.stack = QStackedWidget()
@@ -31,6 +35,8 @@ class MainWindow(QMainWindow):
         self.stack.addWidget(self.loudness_page)
         self.loudness_measure_page = LoudnessMeasurePage()
         self.stack.addWidget(self.loudness_measure_page)
+        self.video_concat_page = VideoConcatPage()
+        self.stack.addWidget(self.video_concat_page)
         # レイアウト結合
         main_layout.addLayout(sidebar, 1)
         main_layout.addWidget(self.stack, 6)
@@ -38,6 +44,7 @@ class MainWindow(QMainWindow):
         # イベント接続
         self.btn_loudness.clicked.connect(lambda: self.stack.setCurrentWidget(self.loudness_page))
         self.btn_measure.clicked.connect(lambda: self.stack.setCurrentWidget(self.loudness_measure_page))
+        self.btn_concat.clicked.connect(lambda: self.stack.setCurrentWidget(self.video_concat_page))
         # Draculaテーマ適用（必要ならQSSを読み込み）
         self.apply_dracula_theme()
 
