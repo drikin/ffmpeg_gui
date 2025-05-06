@@ -3,6 +3,7 @@
 """
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QFileDialog, QTableWidget, QTableWidgetItem, QAbstractItemView, QHeaderView, QCheckBox, QLineEdit, QInputDialog
 from PySide6.QtCore import Qt, QEvent, Signal, QObject
+from PySide6.QtGui import QColor
 from pathlib import Path
 from core.file_scanner import scan_video_files
 from core.command_builder import CommandBuilder
@@ -12,6 +13,7 @@ from ui_parts.file_select_widget import FileSelectWidget
 from ui_parts.log_console_widget import LogConsoleWidget
 from ui_parts.external_storage_file_adder import ExternalStorageFileAdder
 import os
+import re
 
 class LoudnessPage(QWidget):
     # Signal定義
@@ -23,6 +25,7 @@ class LoudnessPage(QWidget):
         super().__init__()
         self.setAcceptDrops(True)
         layout = QVBoxLayout(self)
+        self.file_paths = []  # ファイルリストをインスタンス変数で管理
         # ファイル選択ウィジェット（共通化）
         self.file_select = FileSelectWidget()
         self.file_select.files_changed.connect(self.on_files_changed)
@@ -92,8 +95,8 @@ class LoudnessPage(QWidget):
     def _update_log(self, row: int, log: str):
         self.table.setItem(row, 2, QTableWidgetItem(log[-80:]))
 
-    def on_files_changed(self, file_paths):
-        self.file_paths = file_paths
+    def on_files_changed(self, files):
+        self.file_paths = files
         self.status_map = {f: i for i, f in enumerate(self.file_paths)}
         self.table.setRowCount(len(self.file_paths))
         for i, f in enumerate(self.file_paths):
@@ -119,23 +122,60 @@ class LoudnessPage(QWidget):
     def run_loudness(self):
         use_dynaudnorm = self.chk_dynaudnorm.isChecked() and not self.chk_material.isChecked()
         material_mode = self.chk_material.isChecked()
+        def parse_loudnorm_summary(log_lines):
+            summary = {}
+            for line in log_lines:
+                # ピーク値やLUFSなどを抽出
+                if m := re.match(r"\s*Input Integrated:\s*([\-\d\.]+)", line):
+                    summary['input_lufs'] = float(m.group(1))
+                elif m := re.match(r"\s*Input True Peak:\s*([\-\d\.]+)", line):
+                    summary['input_tp'] = float(m.group(1))
+                elif m := re.match(r"\s*Output Integrated:\s*([\-\d\.]+)", line):
+                    summary['output_lufs'] = float(m.group(1))
+                elif m := re.match(r"\s*Output True Peak:\s*([\-\d\.]+)", line):
+                    summary['output_tp'] = float(m.group(1))
+                elif m := re.match(r"\s*Output LRA:\s*([\-\d\.]+)", line):
+                    summary['output_lra'] = float(m.group(1))
+                elif 'WARNING' in line.upper() or 'clipping' in line.lower():
+                    summary['warning'] = line.strip()
+            return summary
         def task():
             for idx, file_path in enumerate(self.file_paths):
                 row = self.status_map[file_path]
                 self.update_status.emit(row, "実行中")
                 input_path = Path(file_path)
-                # 出力先決定
                 out_dir = Path(self.output_dir) if self.output_dir else input_path.parent
                 out_name = input_path.stem + ("_mat-23LUFS" if material_mode else "_norm-14LUFS") + input_path.suffix
                 output_path = out_dir / out_name
                 cmd = CommandBuilder.build_loudness_normalization_cmd(
                     input_path, output_path, use_dynaudnorm=use_dynaudnorm, material_mode=material_mode)
+                log_lines = []
                 def log_callback(line):
+                    log_lines.append(line)
                     self.update_log.emit(row, line)
                     self.append_logbox.emit(line)
                 ret = Executor.run_command(cmd, log_callback)
-                if ret == 0:
-                    self.update_status.emit(row, "成功")
+                summary = parse_loudnorm_summary(log_lines)
+                # 状態セルの色付き表示
+                if 'warning' in summary or ('output_tp' in summary and summary['output_tp'] > -1.0):
+                    warn_msg = summary.get('warning', '')
+                    if 'output_tp' in summary and summary['output_tp'] > -1.0:
+                        warn_msg += f" True Peak超過: {summary['output_tp']} dBTP"
+                    status_item = QTableWidgetItem(f"警告: {warn_msg}")
+                    status_item.setForeground(QColor("red"))
+                    self.table.setItem(row, 1, status_item)
+                    self.append_logbox.emit(f"[警告] {input_path.name}: {warn_msg}")
                 else:
-                    self.update_status.emit(row, "失敗")
+                    status_item = QTableWidgetItem("OK")
+                    status_item.setForeground(QColor("green"))
+                    self.table.setItem(row, 1, status_item)
+                # 詳細もログ欄に表示
+                detail = f"出力LUFS: {summary.get('output_lufs','')} / Peak: {summary.get('output_tp','')}dBTP / LRA: {summary.get('output_lra','')}"
+                self.update_log.emit(row, detail)
+                if ret == 0:
+                    pass
+                else:
+                    fail_item = QTableWidgetItem("失敗")
+                    fail_item.setForeground(QColor("red"))
+                    self.table.setItem(row, 1, fail_item)
         threading.Thread(target=task, daemon=True).start()

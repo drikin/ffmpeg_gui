@@ -17,11 +17,11 @@ class CommandBuilder:
         material_mode: Trueで素材用（-23LUFS/TP-1/LRA=11/linear）
         """
         if material_mode:
-            af = "loudnorm=I=-23:LRA=11:TP=-1:linear=true"
+            af = "loudnorm=I=-23:LRA=11:TP=-1:linear=true:print_format=summary"
         elif use_dynaudnorm:
-            af = "dynaudnorm=f=250:g=15:p=0.95:m=5:r=0.0:n=1,loudnorm=I=-14:LRA=7:TP=-2"
+            af = "dynaudnorm=f=250:g=15:p=0.95:m=5:r=0.0:n=1,loudnorm=I=-14:LRA=7:TP=-2:print_format=summary"
         else:
-            af = "loudnorm=I=-14:LRA=7:TP=-2"
+            af = "loudnorm=I=-14:LRA=7:TP=-2:print_format=summary"
         return [
             "ffmpeg",
             "-y",
@@ -30,5 +30,6 @@ class CommandBuilder:
             "-c:v", "copy",
             "-c:a", "aac",
             "-b:a", "192k",
+            "-map_metadata", "0",
             str(output_path)
         ]
