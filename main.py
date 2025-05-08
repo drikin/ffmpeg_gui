@@ -9,6 +9,7 @@ from ui_pages.loudness_page import LoudnessPage
 from ui_pages.loudness_measure_page import LoudnessMeasurePage
 from ui_pages.video_concat_page import VideoConcatPage
 from ui_pages.slideshow_page import SlideshowPage
+from ui_pages.auto_speech_extract_page import AutoSpeechExtractPage
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -32,6 +33,10 @@ class MainWindow(QMainWindow):
         self.btn_concat = QPushButton("動画結合")
         self.btn_concat.setObjectName("btn_concat")
         sidebar.addWidget(self.btn_concat)
+        # AI自動セリフ抽出タブ追加
+        self.btn_auto_speech = QPushButton("AIセリフ抽出編集")
+        self.btn_auto_speech.setObjectName("btn_auto_speech")
+        sidebar.insertWidget(0, self.btn_auto_speech)
         # グローバルリセットボタン
         self.btn_reset = QPushButton("全リセット")
         self.btn_reset.setObjectName("btn_reset")
@@ -40,6 +45,8 @@ class MainWindow(QMainWindow):
         sidebar.addStretch()
         # スタックページ
         self.stack = QStackedWidget()
+        self.auto_speech_extract_page = AutoSpeechExtractPage()
+        self.stack.addWidget(self.auto_speech_extract_page)
         self.video_concat_page = VideoConcatPage()
         self.loudness_page = LoudnessPage(concat_page=self.video_concat_page)
         self.stack.addWidget(self.loudness_page)
@@ -53,6 +60,7 @@ class MainWindow(QMainWindow):
         main_layout.addWidget(self.stack, 6)
         self.setCentralWidget(central_widget)
         # イベント接続
+        self.btn_auto_speech.clicked.connect(lambda: self.stack.setCurrentWidget(self.auto_speech_extract_page))
         self.btn_loudness.clicked.connect(lambda: self.stack.setCurrentWidget(self.loudness_page))
         self.btn_measure.clicked.connect(lambda: self.stack.setCurrentWidget(self.loudness_measure_page))
         self.btn_concat.clicked.connect(lambda: self.stack.setCurrentWidget(self.video_concat_page))

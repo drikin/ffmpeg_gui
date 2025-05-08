@@ -56,8 +56,8 @@ class LoudnessPage(QWidget):
         self.chk_dynaudnorm.setChecked(False)
         layout.addWidget(self.chk_dynaudnorm)
         # 素材用最適化チェックボックス
-        self.chk_material = QCheckBox("素材用に最適化（-23LUFS/音質優先/均一化）")
-        self.chk_material.setToolTip("編集素材用途向け。音質を最大限維持しつつ全クリップの音量を均一化します。ラウドネス-23LUFS/ピーク-1dBTPで揃えます。")
+        self.chk_material = QCheckBox("素材用に最適化（-18LUFS/音質優先/均一化）")
+        self.chk_material.setToolTip("編集素材用途向け。音質を最大限維持しつつ全クリップの音量を均一化します。ラウドネス-18LUFS/ピーク-1dBTPで揃えます。")
         self.chk_material.setChecked(False)
         layout.addWidget(self.chk_material)
         # 書き出しフォルダ選択UI
@@ -161,7 +161,7 @@ class LoudnessPage(QWidget):
                 self.update_status.emit(row, "実行中")
                 input_path = Path(file_path)
                 out_dir = Path(self.output_dir) if self.output_dir else input_path.parent
-                out_name = input_path.stem + ("_mat-23LUFS" if material_mode else "_norm-14LUFS") + input_path.suffix
+                out_name = input_path.stem + ("_mat-18LUFS" if material_mode else "_norm-14LUFS") + input_path.suffix
                 output_path = out_dir / out_name
                 cmd = CommandBuilder.build_loudness_normalization_cmd(
                     input_path, output_path, use_dynaudnorm=use_dynaudnorm, material_mode=material_mode)
@@ -173,18 +173,27 @@ class LoudnessPage(QWidget):
                 ret = Executor.run_command(cmd, log_callback)
                 summary = parse_loudnorm_summary(log_lines)
                 # 状態セルの色付き表示
-                if 'warning' in summary or ('output_tp' in summary and summary['output_tp'] > -1.0):
-                    warn_msg = summary.get('warning', '')
-                    if 'output_tp' in summary and summary['output_tp'] > -1.0:
+                warn_msg = summary.get('warning', '')
+                if (
+                    'warning' in summary or
+                    (
+                        'output_tp' in summary and
+                        summary['output_tp'] is not None and
+                        summary['output_tp'] > -1.0
+                    )
+                ):
+                    if 'output_tp' in summary and summary['output_tp'] is not None and summary['output_tp'] > -1.0:
                         warn_msg += f" True Peak超過: {summary['output_tp']} dBTP"
-                    status_item = QTableWidgetItem(f"警告: {warn_msg}")
-                    status_item.setForeground(QColor("red"))
-                    self.table.setItem(row, 1, status_item)
-                    self.append_logbox.emit(f"[警告] {input_path.name}: {warn_msg}")
+                    if warn_msg:
+                        status_item = QTableWidgetItem(f"警告: {warn_msg}")
+                        status_item.setForeground(QColor("red"))
+                        self.table.setItem(row, 1, status_item)
+                        self.append_logbox.emit(f"[警告] {input_path.name}: {warn_msg}")
                 else:
                     status_item = QTableWidgetItem("OK")
                     status_item.setForeground(QColor("green"))
                     self.table.setItem(row, 1, status_item)
+
                 # 詳細もログ欄に表示
                 detail = f"出力LUFS: {summary.get('output_lufs','')} / Peak: {summary.get('output_tp','')}dBTP / LRA: {summary.get('output_lra','')}"
                 self.update_log.emit(row, detail)

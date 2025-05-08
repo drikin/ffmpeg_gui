@@ -1,0 +1,124 @@
+"""
+Whisperを用いた音声セリフ区間抽出・SRT生成・FFmpegコマンド生成モジュール
+"""
+import whisper
+import tempfile
+import os
+import re
+from typing import List, Tuple
+
+class SpeechSegmentExtractor:
+    def __init__(self, whisper_model: str = "base"):
+        self.model = whisper.load_model(whisper_model)
+
+    def transcribe_to_srt(self, audio_path: str, srt_path: str = None) -> str:
+        """
+        指定音声ファイルからWhisperでSRTを生成し、パスを返す
+        """
+        result = self.model.transcribe(audio_path, task="transcribe", verbose=False)
+        if srt_path is None:
+            srt_fd, srt_path = tempfile.mkstemp(suffix=".srt")
+            os.close(srt_fd)
+        with open(srt_path, "w", encoding="utf-8") as f:
+            for i, seg in enumerate(result["segments"], 1):
+                # SRT形式で書き出し
+                start = self._format_srt_time(seg["start"])
+                end = self._format_srt_time(seg["end"])
+                text = seg["text"].strip()
+                f.write(f"{i}\n{start} --> {end}\n{text}\n\n")
+        return srt_path
+
+    def parse_srt_segments(self, srt_path: str, offset_sec: float = 1.0, merge_gap_sec: float = 3.0) -> List[Tuple[float, float]]:
+        """
+        SRTファイルをパースし、start/endにオフセットを加えた区間リストを返す。
+        さらに、会話と会話の間がmerge_gap_sec秒以内なら連続領域としてマージする。
+        """
+        raw_segments = []
+        with open(srt_path, encoding="utf-8") as f:
+            content = f.read()
+        for match in re.finditer(r"(\d+)\n(\d{2}:\d{2}:\d{2},\d{3}) --> (\d{2}:\d{2}:\d{2},\d{3})", content):
+            start = self._parse_srt_time(match.group(2))
+            end = self._parse_srt_time(match.group(3))
+            # オフセット適用
+            start = max(0, start - offset_sec)
+            end = end + offset_sec
+            raw_segments.append((start, end))
+        # 区間のマージ処理
+        if not raw_segments:
+            return []
+        merged = [raw_segments[0]]
+        for seg in raw_segments[1:]:
+            prev_start, prev_end = merged[-1]
+            cur_start, cur_end = seg
+            # 前区間と現区間がmerge_gap_sec以内なら結合
+            if cur_start - prev_end <= merge_gap_sec:
+                merged[-1] = (prev_start, max(prev_end, cur_end))
+            else:
+                merged.append(seg)
+        return merged
+
+    def build_ffmpeg_commands(self, video_path: str, segments: List[Tuple[float, float]], output_path: str) -> str:
+        """
+        FFmpegコマンド文字列を生成（音声はatrim+acrossfadeでクロスフェード結合、映像はtrim+concatで連結）
+        クロスフェード長は1秒。
+        """
+        if not segments or len(segments) == 0:
+            return "# セリフ区間がありません"
+        acf_duration = 1.0  # クロスフェード長（秒）
+        afilters = []  # 音声フィルタ
+        vfilters = []  # 映像フィルタ
+        a_labels = []  # 各セグメント音声ラベル
+        v_labels = []  # 各セグメント映像ラベル
+        for idx, (start, end) in enumerate(segments):
+            a_label = f"a{idx}"
+            v_label = f"v{idx}"
+            a_labels.append(a_label)
+            v_labels.append(v_label)
+            afilters.append(f"[0:a]atrim=start={start}:end={end},asetpts=PTS-STARTPTS[{a_label}]")
+            vfilters.append(f"[0:v]trim=start={start}:end={end},setpts=PTS-STARTPTS[{v_label}]")
+        # 音声acrossfade多段
+        if len(a_labels) == 1:
+            aout = a_labels[0]
+        else:
+            prev = a_labels[0]
+            for idx in range(1, len(a_labels)):
+                curr = a_labels[idx]
+                out = f"ac{idx}"
+                afilters.append(f"[{prev}][{curr}]acrossfade=d={acf_duration}[{out}]")
+                prev = out
+            aout = prev
+        # 映像concat
+        vconcat_labels = ''.join([f'[{v}]' for v in v_labels])
+        vout = 'vout'
+        vfilters.append(f"{vconcat_labels}concat=n={len(v_labels)}:v=1:a=0[{vout}]")
+        # filter_complex全体
+        filter_complex = ';'.join(afilters + vfilters)
+        # コマンド組み立て
+        # macではHWエンコーダ(hevc_videotoolbox)を優先しH.265で出力
+        # libx265でのエンコードも可能だが速度・消費電力の観点でHW優先
+        # クォートは不要。コマンドリストをそのままExecutorに渡す
+        cmd = [
+            "ffmpeg", "-y",
+            "-i", str(video_path),
+            "-filter_complex", filter_complex,
+            "-map", f"[{vout}]", "-map", f"[{aout}]",
+            "-c:v", "hevc_videotoolbox",  # HWエンコーダ指定
+            "-c:a", "aac", "-b:a", "192k",
+            str(output_path)
+        ]
+        # libx265でエンコードしたい場合は "-c:v", "libx265" でも可（ただしCPU負荷高）
+        return cmd
+
+    @staticmethod
+    def _format_srt_time(seconds: float) -> str:
+        h = int(seconds // 3600)
+        m = int((seconds % 3600) // 60)
+        s = int(seconds % 60)
+        ms = int((seconds - int(seconds)) * 1000)
+        return f"{h:02}:{m:02}:{s:02},{ms:03}"
+
+    @staticmethod
+    def _parse_srt_time(srt_time: str) -> float:
+        h, m, s_ms = srt_time.split(":")
+        s, ms = s_ms.split(",")
+        return int(h)*3600 + int(m)*60 + int(s) + int(ms)/1000

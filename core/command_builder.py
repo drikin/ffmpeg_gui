@@ -16,14 +16,15 @@ class CommandBuilder:
         ffmpeg 7.1.1以降のラウドネス補正コマンドを生成
         -14LUFS/YouTube基準
         use_dynaudnorm: Trueでdynaudnorm併用、Falseでloudnormのみ
-        material_mode: Trueで素材用（-23LUFS/TP-1/LRA=11/linear）
+        material_mode: Trueで素材用（-18LUFS/TP-1/LRA=11/linear）
         """
         if material_mode:
-            af = "loudnorm=I=-23:LRA=11:TP=-1:linear=true:print_format=summary"
+            af = "loudnorm=I=-18:LRA=11:TP=-1:linear=true:print_format=summary"
         elif use_dynaudnorm:
             af = "dynaudnorm=f=250:g=15:p=0.95:m=5:r=0.0:n=1,loudnorm=I=-14:LRA=7:TP=-2:print_format=summary"
         else:
             af = "loudnorm=I=-14:LRA=7:TP=-2:print_format=summary"
+        # シンプルな実装（-c:v copy＋音声フィルタ＋最低限のオプションのみ）
         return [
             "ffmpeg",
             "-y",
