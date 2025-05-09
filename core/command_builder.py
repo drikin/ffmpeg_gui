@@ -60,6 +60,7 @@ class CommandBuilder:
             "-c:v", "copy",
             "-c:a", "aac",
             "-b:a", "192k",
+            "-map", "0",
             "-map_metadata", "0",
             str(output_path)
         ]
