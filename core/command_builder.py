@@ -22,6 +22,15 @@ class CommandBuilder:
     ) -> list:
         """
         ffmpeg 7.1.1以降のラウドネス補正コマンドを生成（2パスloudnorm対応）
+        MOVファイルの場合はmp4出力に強制
+        """
+        # MOV入力時はmp4出力に強制
+        force_mp4 = False
+        if str(input_path).lower().endswith('.mov'):
+            force_mp4 = True
+            output_path = output_path.with_suffix('.mp4') if hasattr(output_path, 'with_suffix') else Path(str(output_path)).with_suffix('.mp4')
+        """
+        ffmpeg 7.1.1以降のラウドネス補正コマンドを生成（2パスloudnorm対応）
         - measured_params: 2パス目用の測定値dict（measured_I, measured_TP, measured_LRA, measured_thresh, offset など）
         - true_peak_limit: True Peak制限値（デフォルト-1.5dBTP）
         - add_limiter: Trueでalimiterを追加
@@ -52,19 +61,24 @@ class CommandBuilder:
                 af = f"loudnorm=I=-14:LRA=7:TP={true_peak_limit}:print_format=summary"
             if add_limiter:
                 af += f",alimiter=limit={true_peak_limit}dB"
-        return [
+        cmd = [
             "ffmpeg",
             "-y",
             "-i", str(input_path),
             "-af", af,
             "-c:v", "copy",
-            "-c:a", "pcm_s24be",
-            "-copy_unknown",
+            "-c:a", "aac",
+            "-b:a", "192k",
             "-map", "0",
             "-map_metadata", "0",
-            "-movflags", "+write_colr+use_metadata_tags+faststart",
-            str(output_path)
         ]
+        if force_mp4:
+            # mp4出力用のmovflags推奨値
+            cmd += ["-f", "mp4", "-movflags", "+faststart"]
+        else:
+            cmd += ["-movflags", "+write_colr+use_metadata_tags+faststart"]
+        cmd.append(str(output_path))
+        return cmd
 
 
     @staticmethod
