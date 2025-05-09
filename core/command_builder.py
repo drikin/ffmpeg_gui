@@ -11,20 +11,47 @@ class CommandBuilder:
     ffmpegコマンド生成クラス
     """
     @staticmethod
-    def build_loudness_normalization_cmd(input_path: Path, output_path: Path, use_dynaudnorm: bool = True, material_mode: bool = False) -> list:
+    def build_loudness_normalization_cmd(
+        input_path: Path,
+        output_path: Path,
+        use_dynaudnorm: bool = True,
+        material_mode: bool = False,
+        measured_params: dict = None,
+        true_peak_limit: float = -1.5,
+        add_limiter: bool = True
+    ) -> list:
         """
-        ffmpeg 7.1.1以降のラウドネス補正コマンドを生成
-        -14LUFS/YouTube基準
-        use_dynaudnorm: Trueでdynaudnorm併用、Falseでloudnormのみ
-        material_mode: Trueで素材用（-18LUFS/TP-1/LRA=11/linear）
+        ffmpeg 7.1.1以降のラウドネス補正コマンドを生成（2パスloudnorm対応）
+        - measured_params: 2パス目用の測定値dict（measured_I, measured_TP, measured_LRA, measured_thresh, offset など）
+        - true_peak_limit: True Peak制限値（デフォルト-1.5dBTP）
+        - add_limiter: Trueでalimiterを追加
+        既存のAPI互換維持
         """
-        if material_mode:
-            af = "loudnorm=I=-18:LRA=11:TP=-1:linear=true:print_format=summary"
-        elif use_dynaudnorm:
-            af = "dynaudnorm=f=250:g=15:p=0.95:m=5:r=0.0:n=1,loudnorm=I=-14:LRA=7:TP=-2:print_format=summary"
+        # 2パス目（measured_paramsあり）
+        if measured_params is not None:
+            # loudnorm 2pass
+            lnorm = (
+                f"loudnorm=I={'-18' if material_mode else '-14'}:LRA={'11' if material_mode else '7'}:TP={true_peak_limit}:"
+                f"measured_I={measured_params.get('input_i')}:measured_TP={measured_params.get('input_tp')}:"
+                f"measured_LRA={measured_params.get('input_lra')}:measured_thresh={measured_params.get('input_thresh')}:"
+                f"offset={measured_params.get('target_offset')}:linear=true:print_format=summary"
+            )
+            af = lnorm
+            if add_limiter:
+                af += f",alimiter=limit={true_peak_limit}dB"
         else:
-            af = "loudnorm=I=-14:LRA=7:TP=-2:print_format=summary"
-        # シンプルな実装（-c:v copy＋音声フィルタ＋最低限のオプションのみ）
+            # 1パス目 or 旧互換
+            if material_mode:
+                af = f"loudnorm=I=-18:LRA=11:TP={true_peak_limit}:linear=true:print_format=summary"
+            elif use_dynaudnorm:
+                af = (
+                    f"dynaudnorm=f=250:g=15:p=0.95:m=5:r=0.0:n=1," +
+                    f"loudnorm=I=-14:LRA=7:TP={true_peak_limit}:print_format=summary"
+                )
+            else:
+                af = f"loudnorm=I=-14:LRA=7:TP={true_peak_limit}:print_format=summary"
+            if add_limiter:
+                af += f",alimiter=limit={true_peak_limit}dB"
         return [
             "ffmpeg",
             "-y",
@@ -36,6 +63,7 @@ class CommandBuilder:
             "-map_metadata", "0",
             str(output_path)
         ]
+
 
     @staticmethod
     def get_video_format_info(file_path: str) -> dict:

@@ -156,6 +156,7 @@ class LoudnessPage(QWidget):
                     summary['warning'] = line.strip()
             return summary
         def task():
+            from core.ffprobe_loudness import FFprobeLoudness
             for idx, file_path in enumerate(self.file_paths):
                 row = self.status_map[file_path]
                 self.update_status.emit(row, "実行中")
@@ -163,46 +164,127 @@ class LoudnessPage(QWidget):
                 out_dir = Path(self.output_dir) if self.output_dir else input_path.parent
                 out_name = input_path.stem + ("_mat-18LUFS" if material_mode else "_norm-14LUFS") + input_path.suffix
                 output_path = out_dir / out_name
-                cmd = CommandBuilder.build_loudness_normalization_cmd(
-                    input_path, output_path, use_dynaudnorm=use_dynaudnorm, material_mode=material_mode)
-                log_lines = []
-                def log_callback(line):
-                    log_lines.append(line)
-                    self.update_log.emit(row, line)
-                    self.append_logbox.emit(line)
-                ret = Executor.run_command(cmd, log_callback)
-                summary = parse_loudnorm_summary(log_lines)
-                # 状態セルの色付き表示
-                warn_msg = summary.get('warning', '')
-                if (
-                    'warning' in summary or
-                    (
+
+                # まず音声ストリーム有無を判定
+                if not FFprobeLoudness.has_audio_stream(input_path):
+                    # 無音ファイルはffmpegでそのままコピー
+                    self.append_logbox.emit(f"[コピー] {input_path.name} は音声ストリームが無いため無加工コピー")
+                    cmd = [
+                        "ffmpeg", "-y", "-i", str(input_path), "-c", "copy", str(output_path)
+                    ]
+                    ret = Executor.run_command(cmd)
+                    if ret == 0:
+                        status_item = QTableWidgetItem("無音: コピー")
+                        status_item.setForeground(QColor("blue"))
+                        self.table.setItem(row, 1, status_item)
+                        if self.concat_page is not None:
+                            self.concat_page.add_files_signal.emit([str(output_path)])
+                    else:
+                        fail_item = QTableWidgetItem("コピー失敗")
+                        fail_item.setForeground(QColor("red"))
+                        self.table.setItem(row, 1, fail_item)
+                        self.append_logbox.emit(f"[エラー] {input_path.name}: コピー失敗")
+                    continue
+
+                # 音声ストリームがあり、かつ完全無音の場合もコピー
+                if FFprobeLoudness.is_silent(input_path):
+                    self.append_logbox.emit(f"[コピー] {input_path.name} は音声ストリームが無音のため無加工コピー")
+                    cmd = [
+                        "ffmpeg", "-y", "-i", str(input_path), "-c", "copy", str(output_path)
+                    ]
+                    ret = Executor.run_command(cmd)
+                    if ret == 0:
+                        status_item = QTableWidgetItem("無音: コピー")
+                        status_item.setForeground(QColor("blue"))
+                        self.table.setItem(row, 1, status_item)
+                        if self.concat_page is not None:
+                            self.concat_page.add_files_signal.emit([str(output_path)])
+                    else:
+                        fail_item = QTableWidgetItem("コピー失敗")
+                        fail_item.setForeground(QColor("red"))
+                        self.table.setItem(row, 1, fail_item)
+                        self.append_logbox.emit(f"[エラー] {input_path.name}: コピー失敗")
+                    continue
+
+                # 1パス目: loudnorm測定
+                self.append_logbox.emit(f"[測定] {input_path.name} ラウドネス測定中...")
+                measured, loudnorm_log = FFprobeLoudness.measure_loudness(input_path)
+                # 測定値の異常判定（inf, -inf, None, 範囲外）
+                invalid = False
+                if measured is not None:
+                    import math
+                    for k in ("input_i", "input_tp", "input_lra", "input_thresh", "target_offset"):
+                        v = measured.get(k)
+                        try:
+                            v_num = float(v)
+                            if v_num == float("inf") or v_num == float("-inf") or math.isnan(v_num):
+                                invalid = True
+                                break
+                        except Exception:
+                            invalid = True
+                            break
+                if measured is None or invalid:
+                    fail_item = QTableWidgetItem("音声異常/無音/測定失敗")
+                    fail_item.setForeground(QColor("red"))
+                    self.table.setItem(row, 1, fail_item)
+                    self.append_logbox.emit(f"[エラー] {input_path.name}: 音声ストリーム異常または無音のため補正不可\n--- ffmpeg log ---\n{loudnorm_log.strip()}\n---")
+                    continue
+
+                # 2パス目: loudnorm補正
+                tp_limit = -1.5
+                retry_count = 0
+                max_retry = 2
+                while retry_count <= max_retry:
+                    log_lines = []
+                    def log_callback(line):
+                        log_lines.append(line)
+                        self.update_log.emit(row, line)
+                        self.append_logbox.emit(line)
+                    cmd = CommandBuilder.build_loudness_normalization_cmd(
+                        input_path, output_path,
+                        use_dynaudnorm=use_dynaudnorm,
+                        material_mode=material_mode,
+                        measured_params=measured,
+                        true_peak_limit=tp_limit,
+                        add_limiter=True
+                    )
+                    self.append_logbox.emit(f"[補正] {input_path.name} loudnorm補正（TP={tp_limit}dBTP, リトライ{retry_count}）...")
+                    ret = Executor.run_command(cmd, log_callback)
+                    summary = parse_loudnorm_summary(log_lines)
+                    warn_msg = summary.get('warning', '')
+                    tp_over = (
                         'output_tp' in summary and
                         summary['output_tp'] is not None and
-                        summary['output_tp'] > -1.0
+                        summary['output_tp'] > tp_limit
                     )
-                ):
-                    if 'output_tp' in summary and summary['output_tp'] is not None and summary['output_tp'] > -1.0:
+                    if (('warning' in summary or tp_over) and retry_count < max_retry):
+                        # クリッピングやTP超過時はTP制限値を下げてリトライ
+                        tp_limit -= 0.5
+                        self.append_logbox.emit(f"[再試行] {input_path.name} True Peak制限値を{tp_limit}dBTPに下げて再補正")
+                        retry_count += 1
+                        continue
+                    # 状態セルの色付き表示
+                    if tp_over:
                         warn_msg += f" True Peak超過: {summary['output_tp']} dBTP"
                     if warn_msg:
                         status_item = QTableWidgetItem(f"警告: {warn_msg}")
                         status_item.setForeground(QColor("red"))
                         self.table.setItem(row, 1, status_item)
                         self.append_logbox.emit(f"[警告] {input_path.name}: {warn_msg}")
-                else:
-                    status_item = QTableWidgetItem("OK")
-                    status_item.setForeground(QColor("green"))
-                    self.table.setItem(row, 1, status_item)
+                    else:
+                        status_item = QTableWidgetItem("OK")
+                        status_item.setForeground(QColor("green"))
+                        self.table.setItem(row, 1, status_item)
+                    # 詳細もログ欄に表示
+                    detail = f"出力LUFS: {summary.get('output_lufs','')} / Peak: {summary.get('output_tp','')}dBTP / LRA: {summary.get('output_lra','')}"
+                    self.update_log.emit(row, detail)
+                    if ret == 0:
+                        if self.concat_page is not None:
+                            self.concat_page.add_files_signal.emit([str(output_path)])
+                    else:
+                        fail_item = QTableWidgetItem("失敗")
+                        fail_item.setForeground(QColor("red"))
+                        self.table.setItem(row, 1, fail_item)
+                    break
 
-                # 詳細もログ欄に表示
-                detail = f"出力LUFS: {summary.get('output_lufs','')} / Peak: {summary.get('output_tp','')}dBTP / LRA: {summary.get('output_lra','')}"
-                self.update_log.emit(row, detail)
-                if ret == 0:
-                    # 補正後ファイルを動画結合タブに自動追加（Signal経由でUIスレッドにディスパッチ）
-                    if self.concat_page is not None:
-                        self.concat_page.add_files_signal.emit([str(output_path)])
-                else:
-                    fail_item = QTableWidgetItem("失敗")
-                    fail_item.setForeground(QColor("red"))
-                    self.table.setItem(row, 1, fail_item)
         threading.Thread(target=task, daemon=True).start()

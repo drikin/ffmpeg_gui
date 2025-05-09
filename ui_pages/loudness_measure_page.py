@@ -78,8 +78,9 @@ class LoudnessMeasurePage(QWidget):
                 row = self.status_map[file_path]
                 self.table.setItem(row, 4, QTableWidgetItem("実行中"))
                 self.log_console.append(f"[実行開始] {file_path}")
-                result = FFprobeLoudness.measure_loudness(Path(file_path))
+                result, log = FFprobeLoudness.measure_loudness(Path(file_path))
                 if result:
+                    # ラウドネス測定値をテーブルに反映
                     self.table.setItem(row, 1, QTableWidgetItem(str(result.get("input_i", "-"))))
                     self.table.setItem(row, 2, QTableWidgetItem(str(result.get("input_tp", "-"))))
                     self.table.setItem(row, 3, QTableWidgetItem(str(result.get("input_lra", "-"))))
@@ -87,5 +88,5 @@ class LoudnessMeasurePage(QWidget):
                     self.log_console.append(f"[成功] {file_path}")
                 else:
                     self.table.setItem(row, 4, QTableWidgetItem("失敗"))
-                    self.log_console.append(f"[失敗] {file_path}")
+                    self.log_console.append(f"[失敗] {file_path}\n{log}")
         threading.Thread(target=task, daemon=True).start()
