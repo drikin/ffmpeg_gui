@@ -1,4 +1,4 @@
-from PySide6.QtWidgets import QWidget, QVBoxLayout, QLabel, QPushButton, QMessageBox, QListWidget, QComboBox, QCheckBox
+from PySide6.QtWidgets import QWidget, QVBoxLayout, QLabel, QPushButton, QMessageBox, QListWidget, QComboBox, QCheckBox, QLineEdit
 from PySide6.QtGui import QPixmap
 from PySide6.QtCore import Qt
 from ui_parts.file_select_widget import FileSelectWidget
@@ -39,6 +39,13 @@ class SlideshowPage(QWidget):
         self.exif_checkbox = QCheckBox("Exif情報を左下に表示")
         self.exif_checkbox.setChecked(False)
         layout.addWidget(self.exif_checkbox)
+        # Exif情報がない場合のテキスト入力欄
+        self.exif_missing_text_label = QLabel("Exif情報がない場合のテキスト：")
+        self.exif_missing_text_input = QLineEdit()
+        self.exif_missing_text_input.setPlaceholderText("Leica M4")
+        self.exif_missing_text_input.setText("Leica M4")
+        layout.addWidget(self.exif_missing_text_label)
+        layout.addWidget(self.exif_missing_text_input)
         # スライドショー生成ボタン
         self.btn_generate = QPushButton("スライドショー生成")
         self.btn_generate.clicked.connect(self.on_generate_slideshow)
@@ -88,9 +95,11 @@ class SlideshowPage(QWidget):
         outdir = str(Path(file_list[0]).parent)
         self.btn_generate.setEnabled(False)
         self.log_console.append("[INFO] スライドショー生成を開始します...")
+        # Exif情報がない場合のテキストを取得
+        exif_missing_text = self.exif_missing_text_input.text().strip()
         def task():
             output = SlideshowBuilder.run_slideshow(
-                file_list, outdir, log_func=self.log_console.append, duration_per_image=5, se_path=se_path, exif_enable=exif_enable)
+                file_list, outdir, log_func=self.log_console.append, duration_per_image=5, se_path=se_path, exif_enable=exif_enable, exif_missing_text=exif_missing_text)
             if output:
                 self.log_console.append(f"[完了] 動画ファイル: {output}")
             else:

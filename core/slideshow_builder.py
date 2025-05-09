@@ -83,7 +83,7 @@ class SlideshowBuilder:
         return video_cmd, str(list_path), audio_cmd, audio_out
 
     @staticmethod
-    def run_slideshow(image_files: List[str], output_dir: str, log_func=print, duration_per_image: int = 5, se_path: Optional[str] = None, exif_enable: bool = False) -> Optional[str]:
+    def run_slideshow(image_files: List[str], output_dir: str, log_func=print, duration_per_image: int = 5, se_path: Optional[str] = None, exif_enable: bool = False, exif_missing_text: str = "Exif情報なし") -> Optional[str]:
         """
         画像リストからスライドショー動画を4K出力・縦横比維持・最大化・黒背景で生成（Exif/SE対応）
         """
@@ -177,28 +177,68 @@ class SlideshowBuilder:
                             font2 = ImageFont.truetype("/Library/Fonts/Arial Unicode.ttf", 26)
                         except:
                             font1 = font2 = ImageFont.load_default()
-                        bbox1 = draw.textbbox((0, 0), line1, font=font1)
-                        w1, h1 = bbox1[2] - bbox1[0], bbox1[3] - bbox1[1]
-                        bbox2 = draw.textbbox((0, 0), line2, font=font2)
-                        w2, h2 = bbox2[2] - bbox2[0], bbox2[3] - bbox2[1]
-                        margin = 80
-                        spacing = 6
-                        # offset: 画像が4Kキャンバス内で左上に貼られている座標
-                        text_x = offset[0] + margin
-                        text_y1 = target_h - margin - h2 - spacing - h1
-                        text_y2 = target_h - margin - h2
-                        draw.text((text_x, text_y1), line1, font=font1, fill=(255,255,255,220))
-                        draw.text((text_x, text_y2), line2, font=font2, fill=(255,255,255,220))
+                        if (line1.strip() or line2.strip()):
+                            bbox1 = draw.textbbox((0, 0), line1, font=font1)
+                            w1, h1 = bbox1[2] - bbox1[0], bbox1[3] - bbox1[1]
+                            bbox2 = draw.textbbox((0, 0), line2, font=font2)
+                            w2, h2 = bbox2[2] - bbox2[0], bbox2[3] - bbox2[1]
+                            margin = 80
+                            spacing = 6
+                            text_x = offset[0] + margin
+                            text_y1 = target_h - margin - h2 - spacing - h1
+                            text_y2 = target_h - margin - h2
+                            draw.text((text_x, text_y1), line1, font=font1, fill=(255,255,255,220))
+                            draw.text((text_x, text_y2), line2, font=font2, fill=(255,255,255,220))
+                        else:
+                            # Exif主要項目が全て空ならカスタムテキストを描画
+                            if exif_enable and exif_missing_text:
+                                bbox = draw.textbbox((0, 0), exif_missing_text, font=font1)
+                                w, h = bbox[2] - bbox[0], bbox[3] - bbox[1]
+                                margin = 80
+                                text_x = offset[0] + margin
+                                text_y = target_h - margin - h
+                                draw.text((text_x, text_y), exif_missing_text, font=font1, fill=(255,255,255,220))
                         out_img_path = str(Path(tmp_dir) / Path(img_path).name)
                         canvas.save(out_img_path)
                         processed_images.append(out_img_path)
                     else:
+                        # Exif情報がない場合のテキストを描画
+                        if exif_enable and exif_missing_text:
+                            draw = ImageDraw.Draw(canvas)
+                            try:
+                                font = ImageFont.truetype("/Library/Fonts/Arial Unicode.ttf", 28)
+                            except:
+                                font = ImageFont.load_default()
+                            margin = 80
+                            bbox = draw.textbbox((0, 0), exif_missing_text, font=font)
+                            w, h = bbox[2] - bbox[0], bbox[3] - bbox[1]
+                            text_x = offset[0] + margin
+                            text_y = target_h - margin - h
+                            draw.text((text_x, text_y), exif_missing_text, font=font, fill=(255,255,255,220))
                         out_img_path = str(Path(tmp_dir) / Path(img_path).name)
                         canvas.save(out_img_path)
                         processed_images.append(out_img_path)
                 except Exception as e:
                     log_func(f"[WARN] 4K変換/Exif埋め込み失敗: {img_path} ({e})")
-                    processed_images.append(img_path)
+                    # 例外時もカスタムテキストを描画して保存
+                    try:
+                        if exif_enable and exif_missing_text:
+                            draw = ImageDraw.Draw(canvas)
+                            try:
+                                font = ImageFont.truetype("/Library/Fonts/Arial Unicode.ttf", 28)
+                            except:
+                                font = ImageFont.load_default()
+                            margin = 80
+                            bbox = draw.textbbox((0, 0), exif_missing_text, font=font)
+                            w, h = bbox[2] - bbox[0], bbox[3] - bbox[1]
+                            text_x = offset[0] + margin
+                            text_y = target_h - margin - h
+                            draw.text((text_x, text_y), exif_missing_text, font=font, fill=(255,255,255,220))
+                        out_img_path = str(Path(tmp_dir) / Path(img_path).name)
+                        canvas.save(out_img_path)
+                        processed_images.append(out_img_path)
+                    except Exception as e2:
+                        processed_images.append(img_path)
             image_files_for_video = processed_images
             video_cmd, list_path, audio_cmd, audio_out = SlideshowBuilder.build_ffmpeg_command(
                 image_files_for_video, output_file, duration_per_image, se_path)

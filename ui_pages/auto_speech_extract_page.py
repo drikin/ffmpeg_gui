@@ -76,19 +76,32 @@ class AutoSpeechExtractPage(QWidget):
         try:
             srt_path = self.extractor.transcribe_to_srt(self.file_path)
             self.srt_path = srt_path
-            self._append_log(f"SRT生成完了: {srt_path}\nセグメント抽出中...")
+            # SRTファイルの内容をログ出力
+            try:
+                with open(srt_path, "r", encoding="utf-8") as f:
+                    srt_content = f.read()
+                self._append_log(f"SRT生成完了: {srt_path}\n--- SRT内容 ---\n{srt_content}\n--- END ---\nセグメント抽出中...")
+            except Exception as e:
+                self._append_log(f"SRT生成完了: {srt_path}\n[SRT内容の読込失敗: {e}]\nセグメント抽出中...")
             segments = self.extractor.parse_srt_segments(srt_path)
             self.segments = segments
             self._append_log(f"セグメント抽出完了: {len(segments)}区間\nFFmpegコマンド生成中...")
             ffmpeg_cmd = self.extractor.build_ffmpeg_commands(self.file_path, segments, self.output_path)
-            self._append_log(f"コマンド生成完了\n{ffmpeg_cmd}")
+            # コマンドをログ表示（リストなら空白区切り文字列化）
+            if isinstance(ffmpeg_cmd, list):
+                self._append_log(f"コマンド生成完了\n{' '.join(ffmpeg_cmd)}")
+            else:
+                self._append_log(f"コマンド生成完了\n{ffmpeg_cmd}")
             # FFmpegコマンド自動実行
-            if ffmpeg_cmd.startswith("#"):
+            if isinstance(ffmpeg_cmd, str) and ffmpeg_cmd.startswith("#"):
                 self._append_log(ffmpeg_cmd)
                 return
             self._append_log("FFmpeg実行中...")
-            # コマンドをシェル分割してExecutorに渡す
-            cmd_list = shlex.split(ffmpeg_cmd)
+            # コマンドをExecutorに渡す（リストならそのまま、strならshlex.split）
+            if isinstance(ffmpeg_cmd, list):
+                cmd_list = ffmpeg_cmd
+            else:
+                cmd_list = shlex.split(ffmpeg_cmd)
             ret = Executor.run_command(cmd_list, self._append_log)
             if ret == 0:
                 self._append_log("\n[完了] 編集済み動画の出力が完了しました。")
