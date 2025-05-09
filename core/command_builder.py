@@ -62,6 +62,7 @@ class CommandBuilder:
             "-b:a", "192k",
             "-map", "0",
             "-map_metadata", "0",
+            "-movflags", "+write_colr+use_metadata_tags+faststart",
             str(output_path)
         ]
 
