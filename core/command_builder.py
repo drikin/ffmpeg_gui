@@ -69,14 +69,12 @@ class CommandBuilder:
             "-c:v", "copy",
             "-c:a", "aac",
             "-b:a", "192k",
-            "-map", "0",
-            "-map_metadata", "0",
+            # mp4出力時は映像・音声のみmap、mov出力時は全ストリームmap
         ]
         if force_mp4:
-            # mp4出力用のmovflags推奨値
-            cmd += ["-f", "mp4", "-movflags", "+faststart"]
+            cmd += ["-map", "0:v:0", "-map", "0:a:0", "-map_metadata", "0", "-f", "mp4", "-movflags", "+faststart"]
         else:
-            cmd += ["-movflags", "+write_colr+use_metadata_tags+faststart"]
+            cmd += ["-map", "0", "-map_metadata", "0", "-movflags", "+write_colr+use_metadata_tags+faststart"]
         cmd.append(str(output_path))
         return cmd
 
