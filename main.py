@@ -33,38 +33,39 @@ class MainWindow(QMainWindow):
         self.btn_concat = QPushButton("動画結合")
         self.btn_concat.setObjectName("btn_concat")
         sidebar.addWidget(self.btn_concat)
-        # AI自動セリフ抽出タブ追加
+        # AI自動セリフ抽出タブ追加（全リセットの直前に移動）
         self.btn_auto_speech = QPushButton("AIセリフ抽出編集")
         self.btn_auto_speech.setObjectName("btn_auto_speech")
-        sidebar.insertWidget(0, self.btn_auto_speech)
+        sidebar.insertWidget(sidebar.count(), self.btn_auto_speech)
+        # ストレッチを全リセットボタンの直前に追加
+        sidebar.addStretch()
         # グローバルリセットボタン
         self.btn_reset = QPushButton("全リセット")
         self.btn_reset.setObjectName("btn_reset")
         self.btn_reset.clicked.connect(self.reset_all_file_lists)
         sidebar.addWidget(self.btn_reset)
-        sidebar.addStretch()
         # スタックページ
         self.stack = QStackedWidget()
-        self.auto_speech_extract_page = AutoSpeechExtractPage()
-        self.stack.addWidget(self.auto_speech_extract_page)
         self.video_concat_page = VideoConcatPage()
         self.loudness_page = LoudnessPage(concat_page=self.video_concat_page)
-        self.stack.addWidget(self.loudness_page)
+        self.stack.addWidget(self.loudness_page)  # ラウドネス補正
         self.loudness_measure_page = LoudnessMeasurePage()
-        self.stack.addWidget(self.loudness_measure_page)
-        self.stack.addWidget(self.video_concat_page)
+        self.stack.addWidget(self.loudness_measure_page)  # ラウドネス測定
         self.slideshow_page = SlideshowPage()
-        self.stack.addWidget(self.slideshow_page)
+        self.stack.addWidget(self.slideshow_page)  # スライドショー生成
+        self.stack.addWidget(self.video_concat_page)  # 動画結合
+        self.auto_speech_extract_page = AutoSpeechExtractPage()
+        self.stack.addWidget(self.auto_speech_extract_page)  # AIセリフ抽出編集
         # レイアウト結合
         main_layout.addLayout(sidebar, 1)
         main_layout.addWidget(self.stack, 6)
         self.setCentralWidget(central_widget)
         # イベント接続
-        self.btn_auto_speech.clicked.connect(lambda: self.stack.setCurrentWidget(self.auto_speech_extract_page))
         self.btn_loudness.clicked.connect(lambda: self.stack.setCurrentWidget(self.loudness_page))
         self.btn_measure.clicked.connect(lambda: self.stack.setCurrentWidget(self.loudness_measure_page))
-        self.btn_concat.clicked.connect(lambda: self.stack.setCurrentWidget(self.video_concat_page))
         self.btn_slideshow.clicked.connect(lambda: self.stack.setCurrentWidget(self.slideshow_page))
+        self.btn_concat.clicked.connect(lambda: self.stack.setCurrentWidget(self.video_concat_page))
+        self.btn_auto_speech.clicked.connect(lambda: self.stack.setCurrentWidget(self.auto_speech_extract_page))
         # Draculaテーマ適用（必要ならQSSを読み込み）
         self.apply_dracula_theme()
 
