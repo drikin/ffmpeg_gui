@@ -43,7 +43,7 @@ class AutoSpeechExtractPage(QWidget):
         layout.addWidget(btn_select_output)
 
         # 実行ボタン
-        btn_run = QPushButton("AI自動セリフ抽出＆編集実行")
+        btn_run = QPushButton("AIトリム")
         btn_run.clicked.connect(self.run_extract)
         layout.addWidget(btn_run)
 
@@ -58,9 +58,14 @@ class AutoSpeechExtractPage(QWidget):
         if file:
             self.file_path = file
             self.edit_file.setText(file)
+            # オリジナルファイル名+_trim.mp4 をデフォルト出力ファイル名に設定
+            base, ext = os.path.splitext(file)
+            default_output = base + '_trim.mp4'
+            self.output_path = default_output
+            self.edit_output.setText(default_output)
 
     def select_output(self):
-        file, _ = QFileDialog.getSaveFileName(self, "出力ファイル選択", "", "動画ファイル (*.mp4)")
+        file, _ = QFileDialog.getSaveFileName(self, "出力ファイル選択", self.output_path if self.output_path else "", "動画ファイル (*.mp4)")
         if file:
             self.output_path = file
             self.edit_output.setText(file)
@@ -87,26 +92,37 @@ class AutoSpeechExtractPage(QWidget):
             self.segments = segments
             self._append_log(f"セグメント抽出完了: {len(segments)}区間\nFFmpegコマンド生成中...")
             ffmpeg_cmd = self.extractor.build_ffmpeg_commands(self.file_path, segments, self.output_path)
-            # コマンドをログ表示（リストなら空白区切り文字列化）
-            if isinstance(ffmpeg_cmd, list):
-                self._append_log(f"コマンド生成完了\n{' '.join(ffmpeg_cmd)}")
+            # build_ffmpeg_commandsが複数コマンドリストを返す場合に対応
+            cmds = ffmpeg_cmd
+            if isinstance(cmds, (list, tuple)) and len(cmds) > 0 and isinstance(cmds[0], list):
+                # コマンドリストのリスト（複数候補）
+                success = False
+                for idx, cmd in enumerate(cmds):
+                    self._append_log(f"コマンド候補{idx+1}: {' '.join(cmd)}")
+                    self._append_log("FFmpeg実行中...")
+                    ret = Executor.run_command(cmd, self._append_log)
+                    if ret == 0:
+                        self._append_log("\n[完了] 編集済み動画の出力が完了しました。")
+                        success = True
+                        break
+                    else:
+                        self._append_log(f"\n[エラー] FFmpeg実行に失敗しました (return code={ret})")
+                if not success:
+                    self._append_log("[エラー] すべてのエンコーダでFFmpeg実行に失敗しました")
             else:
-                self._append_log(f"コマンド生成完了\n{ffmpeg_cmd}")
-            # FFmpegコマンド自動実行
-            if isinstance(ffmpeg_cmd, str) and ffmpeg_cmd.startswith("#"):
-                self._append_log(ffmpeg_cmd)
-                return
-            self._append_log("FFmpeg実行中...")
-            # コマンドをExecutorに渡す（リストならそのまま、strならshlex.split）
-            if isinstance(ffmpeg_cmd, list):
-                cmd_list = ffmpeg_cmd
-            else:
-                cmd_list = shlex.split(ffmpeg_cmd)
-            ret = Executor.run_command(cmd_list, self._append_log)
-            if ret == 0:
-                self._append_log("\n[完了] 編集済み動画の出力が完了しました。")
-            else:
-                self._append_log(f"\n[エラー] FFmpeg実行に失敗しました (return code={ret})")
+                # 1コマンドのみ（従来通り）
+                if isinstance(cmds, list):
+                    self._append_log(f"コマンド生成完了\n{' '.join(cmds)}")
+                    cmd_list = cmds
+                else:
+                    self._append_log(f"コマンド生成完了\n{cmds}")
+                    cmd_list = shlex.split(cmds)
+                self._append_log("FFmpeg実行中...")
+                ret = Executor.run_command(cmd_list, self._append_log)
+                if ret == 0:
+                    self._append_log("\n[完了] 編集済み動画の出力が完了しました。")
+                else:
+                    self._append_log(f"\n[エラー] FFmpeg実行に失敗しました (return code={ret})")
         except Exception as e:
             self._append_log(f"[エラー] {str(e)}")
 

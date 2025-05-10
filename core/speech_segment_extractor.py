@@ -97,17 +97,38 @@ class SpeechSegmentExtractor:
         # macではHWエンコーダ(hevc_videotoolbox)を優先しH.265で出力
         # libx265でのエンコードも可能だが速度・消費電力の観点でHW優先
         # クォートは不要。コマンドリストをそのままExecutorに渡す
-        cmd = [
-            "ffmpeg", "-y",
-            "-i", str(video_path),
-            "-filter_complex", filter_complex,
-            "-map", f"[{vout}]", "-map", f"[{aout}]",
-            "-c:v", "hevc_videotoolbox",  # HWエンコーダ指定
-            "-c:a", "aac", "-b:a", "192k",
-            str(output_path)
-        ]
-        # libx265でエンコードしたい場合は "-c:v", "libx265" でも可（ただしCPU負荷高）
-        return cmd
+        import platform
+        # OSごとに適切なエンコーダを選択し、順に試せるようリストで返す
+        system = platform.system()
+        cmd_list = []
+        if system == "Windows" or system == "Linux":
+            # NVIDIA→Intel QSV→ソフトウェアの順で試行
+            for video_codec in ["h264_nvenc", "h264_qsv", "libx264"]:
+                cmd = [
+                    "ffmpeg", "-y",
+                    "-i", str(video_path),
+                    "-filter_complex", filter_complex,
+                    "-map", f"[{vout}]", "-map", f"[{aout}]",
+                    "-c:v", video_codec,  # HWエンコーダ指定
+                    "-c:a", "aac", "-b:a", "192k",
+                    str(output_path)
+                ]
+                cmd_list.append(cmd)
+        elif system == "Darwin":
+            # macOSはvideotoolboxのみ
+            cmd = [
+                "ffmpeg", "-y",
+                "-i", str(video_path),
+                "-filter_complex", filter_complex,
+                "-map", f"[{vout}]", "-map", f"[{aout}]",
+                "-c:v", "hevc_videotoolbox",
+                "-c:a", "aac", "-b:a", "192k",
+                str(output_path)
+            ]
+            cmd_list.append(cmd)
+        # 返り値をリストに変更（呼び出し側で順に実行し、成功したものを採用）
+        # 既存呼び出し側がstr/リスト両対応なので、1つだけの時はそのまま返す
+        return cmd_list if len(cmd_list) > 1 else cmd_list[0]
 
     @staticmethod
     def _format_srt_time(seconds: float) -> str:
