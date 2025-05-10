@@ -42,6 +42,13 @@ class AutoSpeechExtractPage(QWidget):
         layout.addWidget(self.edit_output)
         layout.addWidget(btn_select_output)
 
+        # セリフ間隔しきい値入力欄（秒）を追加
+        self.edit_merge_gap = QLineEdit()
+        self.edit_merge_gap.setPlaceholderText("3.0")
+        self.edit_merge_gap.setText("3.0")  # デフォルト値
+        layout.addWidget(QLabel("セリフ間隔しきい値（秒、デフォルト3.0）:"))
+        layout.addWidget(self.edit_merge_gap)
+
         # 実行ボタン
         btn_run = QPushButton("AIトリム")
         btn_run.clicked.connect(self.run_extract)
@@ -74,8 +81,15 @@ class AutoSpeechExtractPage(QWidget):
         if not self.file_path or not self.output_path:
             self.log_text.append("入力・出力ファイルを選択してください")
             return
-        self.log_text.append("Whisperで音声認識中...")
+        # セリフ間隔しきい値（秒）を取得
+        try:
+            merge_gap_sec = float(self.edit_merge_gap.text())
+        except Exception:
+            merge_gap_sec = 3.0
+        self._merge_gap_sec = merge_gap_sec
+        self.log_text.append(f"Whisperで音声認識中...（セリフ間隔しきい値: {merge_gap_sec}秒）")
         threading.Thread(target=self._run_extract_task, daemon=True).start()
+
 
     def _run_extract_task(self):
         try:
@@ -88,9 +102,12 @@ class AutoSpeechExtractPage(QWidget):
                 self._append_log(f"SRT生成完了: {srt_path}\n--- SRT内容 ---\n{srt_content}\n--- END ---\nセグメント抽出中...")
             except Exception as e:
                 self._append_log(f"SRT生成完了: {srt_path}\n[SRT内容の読込失敗: {e}]\nセグメント抽出中...")
-            segments = self.extractor.parse_srt_segments(srt_path)
+            # セリフ間隔しきい値をparse_srt_segmentsに渡す
+            merge_gap_sec = getattr(self, '_merge_gap_sec', 3.0)
+            segments = self.extractor.parse_srt_segments(srt_path, merge_gap_sec=merge_gap_sec)
             self.segments = segments
             self._append_log(f"セグメント抽出完了: {len(segments)}区間\nFFmpegコマンド生成中...")
+
             ffmpeg_cmd = self.extractor.build_ffmpeg_commands(self.file_path, segments, self.output_path)
             # build_ffmpeg_commandsが複数コマンドリストを返す場合に対応
             cmds = ffmpeg_cmd

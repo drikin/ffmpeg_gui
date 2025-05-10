@@ -76,17 +76,23 @@ class SpeechSegmentExtractor:
             v_labels.append(v_label)
             afilters.append(f"[0:a]atrim=start={start}:end={end},asetpts=PTS-STARTPTS[{a_label}]")
             vfilters.append(f"[0:v]trim=start={start}:end={end},setpts=PTS-STARTPTS[{v_label}]")
-        # 音声acrossfade多段
+        # --- 音声もconcatで単純連結する（acrossfadeは使わない）---
         if len(a_labels) == 1:
             aout = a_labels[0]
         else:
-            prev = a_labels[0]
-            for idx in range(1, len(a_labels)):
-                curr = a_labels[idx]
-                out = f"ac{idx}"
-                afilters.append(f"[{prev}][{curr}]acrossfade=d={acf_duration}[{out}]")
-                prev = out
-            aout = prev
+            # [a0][a1]...[aN]concat=n=N:v=0:a=1[aout]
+            a_concat_labels = ''.join([f'[{a}]' for a in a_labels])
+            aout = 'aout'
+            afilters.append(f"{a_concat_labels}concat=n={len(a_labels)}:v=0:a=1[{aout}]")
+        # ※acrossfadeを使う場合は下記を有効化
+        # prev = a_labels[0]
+        # for idx in range(1, len(a_labels)):
+        #     curr = a_labels[idx]
+        #     out = f"ac{idx}"
+        #     afilters.append(f"[{prev}][{curr}]acrossfade=d={acf_duration}[{out}]")
+        #     prev = out
+        # aout = prev  # ←acrossfadeの最終出力
+
         # 映像concat
         vconcat_labels = ''.join([f'[{v}]' for v in v_labels])
         vout = 'vout'
@@ -111,6 +117,7 @@ class SpeechSegmentExtractor:
                     "-map", f"[{vout}]", "-map", f"[{aout}]",
                     "-c:v", video_codec,  # HWエンコーダ指定
                     "-c:a", "aac", "-b:a", "192k",
+                    "-shortest",  # 映像・音声ストリーム長不一致時に短い方で切ることでmux不整合を防ぐ
                     str(output_path)
                 ]
                 cmd_list.append(cmd)
@@ -123,6 +130,7 @@ class SpeechSegmentExtractor:
                 "-map", f"[{vout}]", "-map", f"[{aout}]",
                 "-c:v", "hevc_videotoolbox",
                 "-c:a", "aac", "-b:a", "192k",
+                "-shortest",  # 映像・音声ストリーム長不一致時に短い方で切ることでmux不整合を防ぐ
                 str(output_path)
             ]
             cmd_list.append(cmd)
