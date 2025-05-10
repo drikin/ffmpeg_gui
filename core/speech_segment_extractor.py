@@ -118,19 +118,24 @@ class SpeechSegmentExtractor:
                     "-c:v", video_codec,  # HWエンコーダ指定
                     "-c:a", "aac", "-b:a", "192k",
                     "-shortest",  # 映像・音声ストリーム長不一致時に短い方で切ることでmux不整合を防ぐ
+                    "-movflags", "faststart",  # QuickTime/Final Cut Pro互換性向上
                     str(output_path)
                 ]
                 cmd_list.append(cmd)
         elif system == "Darwin":
-            # macOSはvideotoolboxのみ
+            # macOSはHWエンコーダ(hevc_videotoolbox)で出力し、Apple互換性を最大化
             cmd = [
                 "ffmpeg", "-y",
                 "-i", str(video_path),
                 "-filter_complex", filter_complex,
                 "-map", f"[{vout}]", "-map", f"[{aout}]",
                 "-c:v", "hevc_videotoolbox",
+                "-pix_fmt", "yuv420p",  # 8bit 4:2:0でApple互換性
+                "-profile:v", "main",   # Main10ではなくMain
+                "-tag:v", "hvc1",       # QuickTime/Final Cut Pro互換タグ
                 "-c:a", "aac", "-b:a", "192k",
-                "-shortest",  # 映像・音声ストリーム長不一致時に短い方で切ることでmux不整合を防ぐ
+                "-shortest",
+                "-movflags", "faststart",
                 str(output_path)
             ]
             cmd_list.append(cmd)
