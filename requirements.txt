@@ -1,5 +1,5 @@
 # OpenAI Whisper音声認識用
-openai-whisper
+openai==0.28
 # PySide6は既存UIの依存
 PySide6
 # ffmpeg-pythonなど必要に応じて追記

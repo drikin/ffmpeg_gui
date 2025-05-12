@@ -25,14 +25,77 @@ class SpeechSegmentExtractor:
                 print(msg)
 
         # OpenAI APIキーが指定された場合は環境変数に設定
-        if api_key:
-            import os
-            os.environ["OPENAI_API_KEY"] = api_key
+        is_server = False
+        use_openai_api = False
+        if api_key and api_key.startswith("sk-"):
+            is_server = True
+            use_openai_api = True
         # word_timestampsオプションをWhisperに渡す
         transcribe_kwargs = dict(task="transcribe", verbose=False, language=language if language != 'auto' else None)
         if word_timestamps:
             transcribe_kwargs["word_timestamps"] = True
-        result = self.model.transcribe(audio_path, **transcribe_kwargs)
+        # ログ: サーバー/ローカル判定
+        if is_server:
+            log("[INFO] Whisper API（サーバー）でワードレベル解析を実行します")
+        else:
+            log("[INFO] ローカルWhisperモデルで解析を実行します")
+
+        import sys
+        import contextlib
+        import io
+        if use_openai_api:
+            import os
+            import subprocess
+            import tempfile
+            import mimetypes
+            try:
+                # 入力が動画またはwav等の場合はaac(m4a)に変換してからAPIに渡す
+                ext = os.path.splitext(audio_path)[1].lower()
+                mime, _ = mimetypes.guess_type(audio_path)
+                need_extract = ext not in ['.m4a', '.aac'] or (mime and not mime.startswith('audio'))
+                if need_extract:
+                    fd, tmp_aac = tempfile.mkstemp(suffix='.m4a')
+                    os.close(fd)
+                    ffmpeg_cmd = [
+                        'ffmpeg', '-y', '-i', audio_path, '-vn', '-acodec', 'aac', '-b:a', '128k', tmp_aac
+                    ]
+                    log(f"[INFO] ffmpegで音声のみAAC(m4a)に切り出し: {' '.join(ffmpeg_cmd)}")
+                    subprocess.run(ffmpeg_cmd, check=True)
+                    upload_path = tmp_aac
+                else:
+                    upload_path = audio_path
+                import openai
+                with open(upload_path, "rb") as audio_file:
+                    log("[INFO] OpenAI Whisper APIへ音声ファイルをアップロードします...")
+                    response = openai.Audio.transcribe(
+                        "whisper-1",
+                        audio_file,
+                        api_key=api_key,
+                        response_format="verbose_json",
+                        language=language if language != 'auto' else None,
+                        word_timestamps=word_timestamps
+                    )
+                    result = response
+                if need_extract:
+                    os.remove(tmp_aac)
+            except Exception as e:
+                log(f"[ERROR] OpenAI APIリクエスト失敗: {e}")
+                raise
+        else:
+            # Whisperのstdout/stderrをキャプチャしてlog_funcに流す
+            stdout_buf = io.StringIO()
+            stderr_buf = io.StringIO()
+            with contextlib.redirect_stdout(stdout_buf), contextlib.redirect_stderr(stderr_buf):
+                result = self.model.transcribe(audio_path, **transcribe_kwargs)
+            # キャプチャした内容をlog_funcに流す
+            std_out = stdout_buf.getvalue()
+            std_err = stderr_buf.getvalue()
+            if std_out.strip():
+                for line in std_out.strip().splitlines():
+                    log(f"[Whisper-stdout] {line}")
+            if std_err.strip():
+                for line in std_err.strip().splitlines():
+                    log(f"[Whisper-stderr] {line}")
         segments = result["segments"]
         # セリフ区間リストと合計再生時間をログ出力
         log("[セリフ区間リスト]")
