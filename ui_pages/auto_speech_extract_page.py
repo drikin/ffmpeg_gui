@@ -44,13 +44,23 @@ class AutoSpeechExtractPage(QWidget):
 
         # セリフ間隔しきい値入力欄（秒）を追加
         self.edit_merge_gap = QLineEdit()
-        self.edit_merge_gap.setPlaceholderText("3.0")
-        self.edit_merge_gap.setText("3.0")  # デフォルト値
+        self.edit_merge_gap.setPlaceholderText("0")
+        self.edit_merge_gap.setText("0")  # デフォルト値
         layout.addWidget(QLabel("セリフ間隔しきい値（秒、デフォルト3.0）:"))
         layout.addWidget(self.edit_merge_gap)
 
+        # 言語選択コンボボックスを追加
+        from PySide6.QtWidgets import QComboBox
+        self.combo_language = QComboBox()
+        self.combo_language.addItem("日本語（デフォルト）", "ja")
+        self.combo_language.addItem("自動判定", "auto")
+        self.combo_language.addItem("英語", "en")
+        self.combo_language.setCurrentIndex(0)
+        layout.addWidget(QLabel("Whisper認識言語:"))
+        layout.addWidget(self.combo_language)
+
         # 実行ボタン
-        btn_run = QPushButton("AIトリム")
+        btn_run = QPushButton("AIジェットカット")
         btn_run.clicked.connect(self.run_extract)
         layout.addWidget(btn_run)
 
@@ -87,13 +97,17 @@ class AutoSpeechExtractPage(QWidget):
         except Exception:
             merge_gap_sec = 3.0
         self._merge_gap_sec = merge_gap_sec
-        self.log_text.append(f"Whisperで音声認識中...（セリフ間隔しきい値: {merge_gap_sec}秒）")
+        # 言語設定を取得
+        language = self.combo_language.currentData()
+        self._language = language
+        self.log_text.append(f"Whisperで音声認識中...（セリフ間隔しきい値: {merge_gap_sec}秒, 言語: {self.combo_language.currentText()}）")
         threading.Thread(target=self._run_extract_task, daemon=True).start()
 
 
     def _run_extract_task(self):
         try:
-            srt_path = self.extractor.transcribe_to_srt(self.file_path)
+            language = getattr(self, '_language', 'ja')
+            srt_path = self.extractor.transcribe_to_srt(self.file_path, language=language)
             self.srt_path = srt_path
             # SRTファイルの内容をログ出力
             try:

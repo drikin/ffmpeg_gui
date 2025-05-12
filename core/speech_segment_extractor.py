@@ -11,11 +11,57 @@ class SpeechSegmentExtractor:
     def __init__(self, whisper_model: str = "base"):
         self.model = whisper.load_model(whisper_model)
 
-    def transcribe_to_srt(self, audio_path: str, srt_path: str = None) -> str:
+    def transcribe_to_srt(self, audio_path: str, srt_path: str = None, language: str = 'ja', log_func=None, output_path: str = None) -> str:
         """
         指定音声ファイルからWhisperでSRTを生成し、パスを返す
+        language: 言語コード（'ja'=日本語, 'en'=英語, None=自動判定）
+        log_func: ログ出力用コールバック（Noneならprint）
+        output_path: 実際に書き出される動画ファイルパス（再生時間を測定する場合に指定）
         """
-        result = self.model.transcribe(audio_path, task="transcribe", verbose=False)
+        def log(msg):
+            if log_func:
+                log_func(msg)
+            else:
+                print(msg)
+
+        result = self.model.transcribe(audio_path, task="transcribe", verbose=False, language=language if language != 'auto' else None)
+        segments = result["segments"]
+        # セリフ区間リストと合計再生時間をログ出力
+        log("[セリフ区間リスト]")
+        total_speech = 0.0
+        for seg in segments:
+            st, ed = seg["start"], seg["end"]
+            log(f"  {st:.2f} - {ed:.2f}秒")
+            total_speech += ed-st
+        # 元動画の再生時間を取得
+        try:
+            import subprocess, re
+            cmd = ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", audio_path]
+            out = subprocess.check_output(cmd, encoding="utf-8", errors="ignore").strip()
+            original_duration = float(re.findall(r"[\d.]+", out)[0])
+        except Exception as e:
+            original_duration = None
+            log(f"[警告] 元動画の再生時間取得失敗: {e}")
+        log("[再生時間]")
+        if original_duration:
+            log(f"  元動画: {original_duration:.2f} 秒")
+        log(f"  切り取り後(理論値): {total_speech:.2f} 秒")
+        if original_duration:
+            log(f"  差分(理論値): {original_duration-total_speech:.2f} 秒")
+
+        # 出力ファイルの実測再生時間もログ
+        if output_path:
+            try:
+                cmd2 = ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", output_path]
+                out2 = subprocess.check_output(cmd2, encoding="utf-8", errors="ignore").strip()
+                actual_duration = float(re.findall(r"[\d.]+", out2)[0])
+                log(f"  出力ファイル実測: {actual_duration:.2f} 秒")
+                if original_duration:
+                    log(f"  差分(実測): {original_duration-actual_duration:.2f} 秒")
+                log(f"  理論値と実測の差: {actual_duration-total_speech:.2f} 秒")
+            except Exception as e:
+                log(f"[警告] 出力ファイル再生時間取得失敗: {e}")
+
         if srt_path is None:
             srt_fd, srt_path = tempfile.mkstemp(suffix=".srt")
             os.close(srt_fd)

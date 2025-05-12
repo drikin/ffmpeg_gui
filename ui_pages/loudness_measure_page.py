@@ -10,14 +10,23 @@ from ui_parts.file_select_widget import FileSelectWidget
 from ui_parts.log_console_widget import LogConsoleWidget
 from ui_parts.external_storage_file_adder import ExternalStorageFileAdder
 
+from PySide6.QtCore import Signal
+
 class LoudnessMeasurePage(QWidget):
+    add_files_signal = Signal(object)  # 型をobjectにしてPySide6の型不一致を回避
     def __init__(self):
         super().__init__()
+        print(f"[DEBUG][stdout] LoudnessMeasurePage __init__ id={id(self)}")
+        if hasattr(self, 'log_console'):
+            self.log_console.append(f"[DEBUG] LoudnessMeasurePage __init__ id={id(self)}")
+        self.add_files_signal.connect(self.add_files)
         layout = QVBoxLayout(self)
         # ファイル選択ウィジェット（共通化）
         self.file_select = FileSelectWidget()
         self.file_select.files_changed.connect(self.on_files_changed)
         layout.addWidget(self.file_select)
+        # add_files_signalをfile_select.add_filesに接続
+        self.add_files_signal.connect(self.add_files)
         # 外部ストレージファイル追加ウィジェット（共通化）
         self.ext_storage_adder = ExternalStorageFileAdder(self)
         self.ext_storage_adder.files_found.connect(self.file_select.add_files)
@@ -47,8 +56,27 @@ class LoudnessMeasurePage(QWidget):
         # ドラッグ&ドロップ有効化
         # self.setAcceptDrops(True)
 
+    def add_files(self, files):
+        print(f"[DEBUG][stdout] add_files called: {files} id={id(self)}")
+        if hasattr(self, 'log_console'):
+            self.log_console.append(f"[DEBUG] add_files called: {files} id={id(self)}")
+        """
+        VideoConcatPageと同じくSignal経由でファイル追加
+        """
+        self.file_select.add_files(files)
+        # デバッグ: 追加直後のファイルリストをログ出力
+        if hasattr(self, 'log_console'):
+            self.log_console.append(f"[DEBUG] add_files呼び出し: {files}")
+            self.log_console.append(f"[DEBUG] file_select.file_paths: {self.file_select.file_paths}")
+
     def on_files_changed(self, file_paths):
+        print(f"[DEBUG][stdout] on_files_changed: {file_paths} id={id(self)}")
+        if hasattr(self, 'log_console'):
+            self.log_console.append(f"[DEBUG] on_files_changed: {file_paths} id={id(self)}")
         self.file_paths = file_paths
+        # デバッグ: on_files_changedで受け取ったファイルリストをログ出力
+        if hasattr(self, 'log_console'):
+            self.log_console.append(f"[DEBUG] on_files_changed: {file_paths}")
         self.status_map = {f: i for i, f in enumerate(self.file_paths)}
         self.table.setRowCount(len(self.file_paths))
         for i, f in enumerate(self.file_paths):

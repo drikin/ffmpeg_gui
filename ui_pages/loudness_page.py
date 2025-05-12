@@ -21,9 +21,10 @@ class LoudnessPage(QWidget):
     update_log = Signal(int, str)
     append_logbox = Signal(str)
 
-    def __init__(self, concat_page=None):
+    def __init__(self, concat_page=None, measure_page=None):
         super().__init__()
         self.concat_page = concat_page
+        self.measure_page = measure_page  # 測定ページへの参照（必要なら渡す）
         self.setAcceptDrops(True)
         layout = QVBoxLayout(self)
         self.file_paths = []  # ファイルリストをインスタンス変数で管理
@@ -72,7 +73,14 @@ class LoudnessPage(QWidget):
         folder_layout.addWidget(btn_select_dir)
         folder_layout.addWidget(btn_reset_dir)
         layout.addLayout(folder_layout)
-        self.output_dir = None
+        # デフォルトの書き出しフォルダー: デスクトップ/本日日付
+        import datetime
+        desktop_path = os.path.join(os.path.expanduser('~'), 'Desktop')
+        today_str = datetime.datetime.now().strftime('%Y%m%d')
+        default_outdir = os.path.join(desktop_path, today_str)
+        os.makedirs(default_outdir, exist_ok=True)
+        self.output_dir = default_outdir
+        self.edit_outdir.setText(self.output_dir)
         btn_select_dir.clicked.connect(self.select_output_dir)
         btn_reset_dir.clicked.connect(self.reset_output_dir)
         # 実行ボタン（右下揃えのためのレイアウト調整）
@@ -279,8 +287,20 @@ class LoudnessPage(QWidget):
                     detail = f"出力LUFS: {summary.get('output_lufs','')} / Peak: {summary.get('output_tp','')}dBTP / LRA: {summary.get('output_lra','')}"
                     self.update_log.emit(row, detail)
                     if ret == 0:
+                        # 結合ページのリストに追加
                         if self.concat_page is not None:
                             self.concat_page.add_files_signal.emit([str(output_path)])
+                        # ラウドネス測定ページのファイルリストにも追加
+                        if hasattr(self, 'measure_page') and self.measure_page is not None:
+                            # デバッグ: Signal発火直前に情報出力
+                            if hasattr(self, 'log_console'):
+                                self.log_console.append(f"[DEBUG] measure_page: {self.measure_page}")
+                                self.log_console.append(f"[DEBUG] measure_page.add_files_signal: {getattr(self.measure_page, 'add_files_signal', None)}")
+                                self.log_console.append(f"[DEBUG] measure_page.add_files: {getattr(self.measure_page, 'add_files', None)}")
+                                self.log_console.append(f"[DEBUG] emit add_files_signal: {[str(output_path)]}")
+                            self.measure_page.add_files_signal.emit([str(output_path)])
+                            if hasattr(self, 'log_console'):
+                                self.log_console.append(f"[DEBUG] add_files_signal.emit完了")
                     else:
                         fail_item = QTableWidgetItem("失敗")
                         fail_item.setForeground(QColor("red"))
