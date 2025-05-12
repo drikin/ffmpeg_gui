@@ -8,7 +8,7 @@ import re
 from typing import List, Tuple
 
 class SpeechSegmentExtractor:
-    def __init__(self, whisper_model: str = "base"):
+    def __init__(self, whisper_model: str = "large"):
         self.model = whisper.load_model(whisper_model)
 
     def transcribe_to_srt(self, audio_path: str, srt_path: str = None, language: str = 'ja', log_func=None, output_path: str = None) -> str:
