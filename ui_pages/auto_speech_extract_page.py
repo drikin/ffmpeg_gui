@@ -1,8 +1,8 @@
 """
 AI自動セリフ抽出＆クロスフェード編集ページUI
 """
-from PySide6.QtWidgets import QWidget, QVBoxLayout, QPushButton, QLabel, QLineEdit, QFileDialog, QTextEdit
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtWidgets import QWidget, QVBoxLayout, QPushButton, QLabel, QLineEdit, QFileDialog, QTextEdit, QCheckBox
+from PySide6.QtCore import Qt, Signal, QSettings
 from core.speech_segment_extractor import SpeechSegmentExtractor
 from core.executor import Executor
 import os
@@ -23,6 +23,21 @@ class AutoSpeechExtractPage(QWidget):
         self.srt_path = None
         self.segments = []
         self.output_path = None
+        self.settings = QSettings("drikin", "ffmpeg_gui")
+
+        # Whisperワードレベル解析ON/OFF
+        self.chk_word_level = QCheckBox("ワードレベルで解析する（word_timestamps）")
+        self.chk_word_level.setChecked(self.settings.value("word_level", False, type=bool))
+        layout.addWidget(self.chk_word_level)
+
+        # OpenAI APIキー入力欄
+        layout.addWidget(QLabel("OpenAI APIキー（Whisper API用、省略可）:"))
+        self.edit_api_key = QLineEdit()
+        self.edit_api_key.setPlaceholderText("sk-...（入力した値は保存されます）")
+        self.edit_api_key.setEchoMode(QLineEdit.Password)
+        api_key = self.settings.value("openai_api_key", "", type=str)
+        self.edit_api_key.setText(api_key)
+        layout.addWidget(self.edit_api_key)
 
         # ファイル選択UI
         self.edit_file = QLineEdit()
@@ -100,14 +115,24 @@ class AutoSpeechExtractPage(QWidget):
         # 言語設定を取得
         language = self.combo_language.currentData()
         self._language = language
-        self.log_text.append(f"Whisperで音声認識中...（セリフ間隔しきい値: {merge_gap_sec}秒, 言語: {self.combo_language.currentText()}）")
+        # word_timestampsオプション
+        word_level = self.chk_word_level.isChecked()
+        self._word_level = word_level
+        # APIキー保存
+        api_key = self.edit_api_key.text().strip()
+        self.settings.setValue("openai_api_key", api_key)
+        self.settings.setValue("word_level", word_level)
+        self._api_key = api_key
+        self.log_text.append(f"Whisperで音声認識中...（セリフ間隔しきい値: {merge_gap_sec}秒, 言語: {self.combo_language.currentText()}、ワードレベル: {'ON' if word_level else 'OFF'}）")
         threading.Thread(target=self._run_extract_task, daemon=True).start()
 
 
     def _run_extract_task(self):
         try:
             language = getattr(self, '_language', 'ja')
-            srt_path = self.extractor.transcribe_to_srt(self.file_path, language=language)
+            word_level = getattr(self, '_word_level', False)
+            api_key = getattr(self, '_api_key', None)
+            srt_path = self.extractor.transcribe_to_srt(self.file_path, language=language, word_timestamps=word_level, api_key=api_key)
             self.srt_path = srt_path
             # SRTファイルの内容をログ出力
             try:

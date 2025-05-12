@@ -11,7 +11,7 @@ class SpeechSegmentExtractor:
     def __init__(self, whisper_model: str = "large"):
         self.model = whisper.load_model(whisper_model)
 
-    def transcribe_to_srt(self, audio_path: str, srt_path: str = None, language: str = 'ja', log_func=None, output_path: str = None) -> str:
+    def transcribe_to_srt(self, audio_path: str, srt_path: str = None, language: str = 'ja', log_func=None, output_path: str = None, word_timestamps: bool = False, api_key: str = None) -> str:
         """
         指定音声ファイルからWhisperでSRTを生成し、パスを返す
         language: 言語コード（'ja'=日本語, 'en'=英語, None=自動判定）
@@ -24,7 +24,15 @@ class SpeechSegmentExtractor:
             else:
                 print(msg)
 
-        result = self.model.transcribe(audio_path, task="transcribe", verbose=False, language=language if language != 'auto' else None)
+        # OpenAI APIキーが指定された場合は環境変数に設定
+        if api_key:
+            import os
+            os.environ["OPENAI_API_KEY"] = api_key
+        # word_timestampsオプションをWhisperに渡す
+        transcribe_kwargs = dict(task="transcribe", verbose=False, language=language if language != 'auto' else None)
+        if word_timestamps:
+            transcribe_kwargs["word_timestamps"] = True
+        result = self.model.transcribe(audio_path, **transcribe_kwargs)
         segments = result["segments"]
         # セリフ区間リストと合計再生時間をログ出力
         log("[セリフ区間リスト]")
