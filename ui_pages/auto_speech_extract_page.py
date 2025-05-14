@@ -1,7 +1,7 @@
 """
 AI自動セリフ抽出＆クロスフェード編集ページUI
 """
-from PySide6.QtWidgets import QWidget, QVBoxLayout, QPushButton, QLabel, QLineEdit, QFileDialog, QTextEdit, QCheckBox
+from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QLineEdit, QFileDialog, QTextEdit, QCheckBox, QComboBox
 from PySide6.QtCore import Qt, Signal, QSettings
 from core.speech_segment_extractor import SpeechSegmentExtractor
 from core.executor import Executor
@@ -25,65 +25,104 @@ class AutoSpeechExtractPage(QWidget):
         self.output_path = None
         self.settings = QSettings("drikin", "ffmpeg_gui")
 
+        # ログ表示を最上部に
+        self.log_text = QTextEdit()
+        self.log_text.setReadOnly(True)
+        self.log_text.setMinimumHeight(100)
+        self.log_text.setMaximumHeight(150)
+        layout.addWidget(self.log_text)
+
         # Whisperワードレベル解析ON/OFF
         self.chk_word_level = QCheckBox("ワードレベルで解析する（word_timestamps）")
         self.chk_word_level.setChecked(self.settings.value("word_level", False, type=bool))
         layout.addWidget(self.chk_word_level)
 
         # OpenAI APIキー入力欄
-        layout.addWidget(QLabel("OpenAI APIキー（Whisper API用、省略可）:"))
+        api_key_layout = QHBoxLayout()
+        api_key_label = QLabel("OpenAI APIキー（Whisper API用、省略可）:")
         self.edit_api_key = QLineEdit()
         self.edit_api_key.setPlaceholderText("sk-...（入力した値は保存されます）")
         self.edit_api_key.setEchoMode(QLineEdit.Password)
         api_key = self.settings.value("openai_api_key", "", type=str)
         self.edit_api_key.setText(api_key)
-        layout.addWidget(self.edit_api_key)
+        api_key_layout.addWidget(api_key_label)
+        api_key_layout.addWidget(self.edit_api_key)
+        layout.addLayout(api_key_layout)
 
-        # ファイル選択UI
+        # 入力ファイル選択UI（横並び）
+        file_layout = QHBoxLayout()
+        file_label = QLabel("入力動画ファイル:")
         self.edit_file = QLineEdit()
         self.edit_file.setReadOnly(True)
         btn_select_file = QPushButton("動画ファイル選択")
         btn_select_file.clicked.connect(self.select_file)
-        layout.addWidget(QLabel("入力動画ファイル:"))
-        layout.addWidget(self.edit_file)
-        layout.addWidget(btn_select_file)
+        file_layout.addWidget(file_label)
+        file_layout.addWidget(self.edit_file)
+        file_layout.addWidget(btn_select_file)
+        layout.addLayout(file_layout)
 
-        # 出力先選択
-        self.edit_output = QLineEdit()
-        self.edit_output.setReadOnly(True)
-        btn_select_output = QPushButton("出力ファイル選択")
-        btn_select_output.clicked.connect(self.select_output)
-        layout.addWidget(QLabel("出力ファイル:"))
-        layout.addWidget(self.edit_output)
-        layout.addWidget(btn_select_output)
-
-        # セリフ間隔しきい値入力欄（秒）を追加
+        # セリフ間隔しきい値入力UI（横並び）
+        merge_gap_layout = QHBoxLayout()
+        merge_gap_label = QLabel("セリフ間隔しきい値（秒）:")
         self.edit_merge_gap = QLineEdit()
-        self.edit_merge_gap.setPlaceholderText("0")
-        self.edit_merge_gap.setText("0")  # デフォルト値
-        layout.addWidget(QLabel("セリフ間隔しきい値（秒、デフォルト3.0）:"))
-        layout.addWidget(self.edit_merge_gap)
+        self.edit_merge_gap.setPlaceholderText("例: 3.0")
+        self.edit_merge_gap.setText(str(self.settings.value("merge_gap_sec", 3.0, type=float)))
+        merge_gap_layout.addWidget(merge_gap_label)
+        merge_gap_layout.addWidget(self.edit_merge_gap)
+        layout.addLayout(merge_gap_layout)
 
-        # 言語選択コンボボックスを追加
-        from PySide6.QtWidgets import QComboBox
+        # 言語選択コンボボックス（Whisper認識言語）
+        lang_layout = QHBoxLayout()
+        lang_label = QLabel("Whisper認識言語:")
         self.combo_language = QComboBox()
         self.combo_language.addItem("日本語（デフォルト）", "ja")
         self.combo_language.addItem("自動判定", "auto")
         self.combo_language.addItem("英語", "en")
         self.combo_language.setCurrentIndex(0)
-        layout.addWidget(QLabel("Whisper認識言語:"))
-        layout.addWidget(self.combo_language)
+        lang_layout.addWidget(lang_label)
+        lang_layout.addWidget(self.combo_language)
+        layout.addLayout(lang_layout)
 
-        # 実行ボタン
-        btn_run = QPushButton("AIジェットカット")
-        btn_run.clicked.connect(self.run_extract)
-        layout.addWidget(btn_run)
+        # 出力ファイル選択UI（横並び）
+        output_layout = QHBoxLayout()
+        output_label = QLabel("出力ファイル:")
+        self.edit_output = QLineEdit()
+        self.edit_output.setReadOnly(True)
+        btn_select_output = QPushButton("出力ファイル選択")
+        btn_select_output.clicked.connect(self.select_output)
+        output_layout.addWidget(output_label)
+        output_layout.addWidget(self.edit_output)
+        output_layout.addWidget(btn_select_output)
+        layout.addLayout(output_layout)
 
-        # ログ表示
-        self.log_text = QTextEdit()
-        self.log_text.setReadOnly(True)
-        self.log_text.setMinimumHeight(120)
-        layout.addWidget(self.log_text)
+        # 外部SRTファイル指定UI（横並び）
+        srt_layout = QHBoxLayout()
+        srt_label = QLabel("外部SRTファイル（指定時は音声認識せずトリム）:")
+        self.edit_srt = QLineEdit()
+        self.edit_srt.setReadOnly(True)
+        btn_select_srt = QPushButton("SRTファイル選択（任意）")
+        btn_select_srt.clicked.connect(self.select_srt_file)
+        srt_layout.addWidget(srt_label)
+        srt_layout.addWidget(self.edit_srt)
+        srt_layout.addWidget(btn_select_srt)
+        layout.addLayout(srt_layout)
+
+        # --- 実行ボタンを一番最後に追加（常に下部に表示されるように） ---
+        self.btn_run = QPushButton("AIジェットカット")
+        self.btn_run.clicked.connect(self.run_extract)
+        layout.addWidget(self.btn_run)
+
+        from PySide6.QtWidgets import QSpacerItem, QSizePolicy
+        layout.addItem(QSpacerItem(0, 0, QSizePolicy.Minimum, QSizePolicy.Expanding))
+
+    def select_srt_file(self):
+        file, _ = QFileDialog.getOpenFileName(self, "SRTファイル選択", "", "字幕ファイル (*.srt)")
+        if file:
+            self.srt_path = file
+            self.edit_srt.setText(file)
+        else:
+            self.srt_path = None
+            self.edit_srt.setText("")
 
     def select_file(self):
         file, _ = QFileDialog.getOpenFileName(self, "動画ファイル選択", "", "動画ファイル (*.mp4 *.mov *.mkv *.avi)")
@@ -123,7 +162,10 @@ class AutoSpeechExtractPage(QWidget):
         self.settings.setValue("openai_api_key", api_key)
         self.settings.setValue("word_level", word_level)
         self._api_key = api_key
-        self.log_text.append(f"Whisperで音声認識中...（セリフ間隔しきい値: {merge_gap_sec}秒, 言語: {self.combo_language.currentText()}、ワードレベル: {'ON' if word_level else 'OFF'}）")
+        if hasattr(self, 'srt_path') and self.srt_path:
+            self.log_text.append(f"外部SRTファイル指定あり: {self.srt_path}\nWhisperによる音声認識はスキップします")
+        else:
+            self.log_text.append(f"Whisperで音声認識中...（セリフ間隔しきい値: {merge_gap_sec}秒, 言語: {self.combo_language.currentText()}、ワードレベル: {'ON' if word_level else 'OFF'}）")
         threading.Thread(target=self._run_extract_task, daemon=True).start()
 
 
@@ -132,17 +174,52 @@ class AutoSpeechExtractPage(QWidget):
             language = getattr(self, '_language', 'ja')
             word_level = getattr(self, '_word_level', False)
             api_key = getattr(self, '_api_key', None)
-            srt_path = self.extractor.transcribe_to_srt(self.file_path, language=language, word_timestamps=word_level, api_key=api_key)
-            self.srt_path = srt_path
-            # SRTファイルの内容をログ出力
-            try:
-                with open(srt_path, "r", encoding="utf-8") as f:
-                    srt_content = f.read()
-                self._append_log(f"SRT生成完了: {srt_path}\n--- SRT内容 ---\n{srt_content}\n--- END ---\nセグメント抽出中...")
-            except Exception as e:
-                self._append_log(f"SRT生成完了: {srt_path}\n[SRT内容の読込失敗: {e}]\nセグメント抽出中...")
-            # セリフ間隔しきい値をparse_srt_segmentsに渡す
             merge_gap_sec = getattr(self, '_merge_gap_sec', 3.0)
+
+            # 外部SRT指定時はtranscribe_to_srtをスキップ
+            if hasattr(self, 'srt_path') and self.srt_path:
+                srt_path = self.srt_path
+                self._append_log(f"外部SRTファイルを利用します: {srt_path}\nWhisperによる音声認識は行いません")
+                # --- ここから外部SRTでも詳細ログ出力 ---
+                try:
+                    segments = self.extractor.parse_srt_segments(srt_path, merge_gap_sec=merge_gap_sec)
+                    self.segments = segments
+                    # カット区間数
+                    num_segments = len(segments)
+                    # カット後合計再生時間
+                    total_speech = sum(ed-st for st, ed in segments)
+                    # 元動画の再生時間
+                    import subprocess, re
+                    cmd = ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", self.file_path]
+                    out = subprocess.check_output(cmd, encoding="utf-8", errors="ignore").strip()
+                    original_duration = float(re.findall(r"[\d.]+", out)[0])
+                    self._append_log(f"[再生時間]")
+                    self._append_log(f"  元動画: {original_duration:.2f} 秒")
+                    self._append_log(f"  カット後(理論値): {total_speech:.2f} 秒")
+                    self._append_log(f"  区間数: {num_segments}")
+                    self._append_log(f"  短縮される合計時間: {original_duration-total_speech:.2f} 秒")
+                except Exception as e:
+                    self._append_log(f"[警告] 外部SRT情報の集計失敗: {e}")
+
+            else:
+                srt_path = self.extractor.transcribe_to_srt(
+                    self.file_path,
+                    language=language,
+                    word_timestamps=word_level,
+                    api_key=api_key,
+                    log_func=self._append_log,
+                    output_path=self.output_path
+                )
+                self.srt_path = srt_path
+                # SRTファイルの内容をログ出力
+                try:
+                    with open(srt_path, "r", encoding="utf-8") as f:
+                        srt_content = f.read()
+                    self._append_log(f"SRT生成完了: {srt_path}\n--- SRT内容 ---\n{srt_content}\n--- END ---\nセグメント抽出中...")
+                except Exception as e:
+                    self._append_log(f"SRT生成完了: {srt_path}\n[SRT内容の読込失敗: {e}]\nセグメント抽出中...")
+
+            # セリフ間隔しきい値をparse_srt_segmentsに渡す
             segments = self.extractor.parse_srt_segments(srt_path, merge_gap_sec=merge_gap_sec)
             self.segments = segments
             self._append_log(f"セグメント抽出完了: {len(segments)}区間\nFFmpegコマンド生成中...")

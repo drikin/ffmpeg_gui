@@ -5,6 +5,10 @@ from typing import List, Optional
 import tempfile
 import shutil
 from PIL import Image, ImageDraw, ImageFont, ExifTags
+# 追加: pydub
+from pydub import AudioSegment
+# 追加: pydub
+from pydub import AudioSegment
 
 class SlideshowBuilder:
     @staticmethod
@@ -58,28 +62,26 @@ class SlideshowBuilder:
         # SE合成コマンド生成
         audio_cmd, audio_out = None, None
         if se_path:
-            n = len(image_files)  # 各画像の頭でSEを鳴らす（画像枚数分）
+            # --- pydubでSE音を画像枚数分だけ分割・パディングし、連結したBGMを生成 ---
+            n = len(image_files)
             audio_out = str(Path(output_file).with_suffix('.wav'))
-            inputs = []
-            for _ in range(n):
-                inputs += ['-i', se_path]
-            adelay_filters = []
-            amix_inputs = []
+            se = AudioSegment.from_file(se_path)
+            segs = []
             for i in range(n):
-                delay = i * duration_per_image * 1000
-                adelay_filters.append(f"[{i}]adelay={delay}|{delay}[a{i}]")
-                amix_inputs.append(f"[a{i}]")
-            # 動画の長さ（秒）を先に定義
-            total_duration = len(image_files) * duration_per_image
-            # amixのあとにapadで無音パディングを追加（動画長まで音声を伸ばす）
-            filter_complex = ";".join(adelay_filters) + ";" + "".join(amix_inputs) + f"amix=inputs={n},apad=pad_dur={total_duration}"
-            audio_cmd = [
-                'ffmpeg', '-y',
-                *inputs,
-                '-filter_complex', filter_complex,
-                '-t', str(total_duration),  # 念のため音声長も明示
-                audio_out
-            ]
+                # 画像表示時間分だけ切り出し（足りなければ無音でパディング）
+                seg = se[:duration_per_image*1000]
+                if len(seg) < duration_per_image*1000:
+                    pad = AudioSegment.silent(duration=duration_per_image*1000 - len(seg))
+                    seg += pad
+                segs.append(seg)
+            # 連結
+            bgm = sum(segs)
+            bgm.export(audio_out, format="wav")
+            # ffmpegでmuxするだけ
+            audio_cmd = None  # pydubで生成済みなので不要
+            #
+            # これによりSE音が画像枚数分、重なりなく均等に並ぶ
+
         return video_cmd, str(list_path), audio_cmd, audio_out
 
     @staticmethod
@@ -247,12 +249,8 @@ class SlideshowBuilder:
             if proc_v.returncode != 0:
                 log_func('[エラー] 動画生成失敗: ' + proc_v.stderr)
                 return None
-            if se_path and audio_cmd:
-                log_func('[INFO] SE合成コマンド: ' + ' '.join(audio_cmd))
-                proc_a = subprocess.run(audio_cmd, capture_output=True, text=True)
-                if proc_a.returncode != 0:
-                    log_func('[エラー] SE合成失敗: ' + proc_a.stderr)
-                    return None
+            # --- SE合成済み音声(audio_out)が存在する場合は必ずそれをmux ---
+            if se_path and audio_out and Path(audio_out).exists():
                 final_out = str(Path(output_file).with_suffix('.mux.mov'))
                 mux_cmd = [
                     'ffmpeg', '-y',

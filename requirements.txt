@@ -4,3 +4,9 @@ openai==0.28
 PySide6
 # ffmpeg-pythonなど必要に応じて追記
 ffmpeg-python
+
+# WhisperX, Silero VAD, webrtcvad, pydub追加
+whisperx
+silero-vad
+webrtcvad
+pydub
