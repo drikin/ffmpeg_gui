@@ -43,8 +43,8 @@ class SpeechSegmentExtractor:
         import sys
         import contextlib
         import io
+        import os  # ここで必ずインポート
         if use_openai_api:
-            import os
             import subprocess
             import tempfile
             import mimetypes
@@ -99,11 +99,17 @@ class SpeechSegmentExtractor:
         segments = result["segments"]
         # セリフ区間リストと合計再生時間をログ出力
         log("[セリフ区間リスト]")
+        # duration制限・重複除外済みの区間リストで再計算
         total_speech = 0.0
+        used = []
         for seg in segments:
             st, ed = seg["start"], seg["end"]
+            # duration制限・重複除外済み（parse_srt_segments側で保証済み）
+            if used and abs(st - used[-1][0]) < 1e-3 and abs(ed - used[-1][1]) < 1e-3:
+                continue
             log(f"  {st:.2f} - {ed:.2f}秒")
             total_speech += ed-st
+            used.append((st, ed))
         # 元動画の再生時間を取得
         try:
             import subprocess, re
@@ -145,11 +151,24 @@ class SpeechSegmentExtractor:
                 f.write(f"{i}\n{start} --> {end}\n{text}\n\n")
         return srt_path
 
-    def parse_srt_segments(self, srt_path: str, offset_sec: float = 1.0, merge_gap_sec: float = 3.0) -> List[Tuple[float, float]]:
+    def parse_srt_segments(self, srt_path: str, offset_sec: float = 1.0, merge_gap_sec: float = 0.0, reference_media_path: str = None) -> List[Tuple[float, float]]:
         """
         SRTファイルをパースし、start/endにオフセットを加えた区間リストを返す。
-        さらに、会話と会話の間がmerge_gap_sec秒以内なら連続領域としてマージする。
+        merge_gap_sec（デフォルト0）はセリフ間隔のマージ閾値。0の時はSRTセグメント単位で返す。
+        reference_media_pathが指定されていれば、その長さを超える区間は無視する。
         """
+        # 入力メディアの長さ取得
+        max_duration = None
+        if reference_media_path:
+            try:
+                import subprocess
+                cmd = [
+                    "ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", reference_media_path
+                ]
+                out = subprocess.check_output(cmd, encoding="utf-8", errors="ignore").strip()
+                max_duration = float(re.findall(r"[\d.]+", out)[0])
+            except Exception:
+                max_duration = None
         raw_segments = []
         with open(srt_path, encoding="utf-8") as f:
             content = f.read()
@@ -158,11 +177,42 @@ class SpeechSegmentExtractor:
             end = self._parse_srt_time(match.group(3))
             # オフセット適用
             start = max(0, start - offset_sec)
-            end = end + offset_sec
+            if max_duration is not None:
+                if start >= max_duration:
+                    # startがduration超えた時点で以降の区間は無視
+                    break
+                end = min(end + offset_sec, max_duration)
+            else:
+                end = end + offset_sec
+            # 無効・ゼロ長・逆転区間・重複区間を除外
+            if end <= start:
+                continue
+            if raw_segments and abs(start - raw_segments[-1][0]) < 1e-3 and abs(end - raw_segments[-1][1]) < 1e-3:
+                continue  # 完全重複
             raw_segments.append((start, end))
-        # 区間のマージ処理
+        # 最後のトリム範囲のendをdurationに合わせる
+        if max_duration is not None and raw_segments:
+            last_start, last_end = raw_segments[-1]
+            if last_end > max_duration:
+                raw_segments[-1] = (last_start, max_duration)
         if not raw_segments:
             return []
+        def _normalize_segments(segments):
+            if not segments:
+                return []
+            segments = sorted(segments, key=lambda x: x[0])
+            merged = [segments[0]]
+            for cur in segments[1:]:
+                prev = merged[-1]
+                if cur[0] <= prev[1]:  # 重複・連続・オーバーラップ
+                    merged[-1] = (prev[0], max(prev[1], cur[1]))
+                else:
+                    merged.append(cur)
+            return merged
+        if merge_gap_sec == 0:
+            # SRTセグメント単位で重複・オーバーラップも正規化して返す
+            return _normalize_segments(raw_segments)
+        # 区間のマージ処理
         merged = [raw_segments[0]]
         for seg in raw_segments[1:]:
             prev_start, prev_end = merged[-1]
@@ -174,14 +224,14 @@ class SpeechSegmentExtractor:
                 merged.append(seg)
         return merged
 
-    def build_ffmpeg_commands(self, video_path: str, segments: List[Tuple[float, float]], output_path: str) -> str:
+    def build_ffmpeg_commands(self, video_path: str, segments: List[Tuple[float, float]], output_path: str, merge_gap_sec: float = 0.0) -> str:
         """
-        FFmpegコマンド文字列を生成（音声はatrim+acrossfadeでクロスフェード結合、映像はtrim+concatで連結）
-        クロスフェード長は1秒。
+        FFmpegコマンド文字列を生成
+        セリフ間隔しきい値（merge_gap_sec）が0のときはSRTセグメント区間だけを切り出して単純連結（acrossfade無し）
+        0以外のときは従来通り（必要に応じてacrossfade/マージ）
         """
         if not segments or len(segments) == 0:
             return "# セリフ区間がありません"
-        acf_duration = 1.0  # クロスフェード長（秒）
         afilters = []  # 音声フィルタ
         vfilters = []  # 映像フィルタ
         a_labels = []  # 各セグメント音声ラベル
@@ -193,14 +243,14 @@ class SpeechSegmentExtractor:
             v_labels.append(v_label)
             afilters.append(f"[0:a]atrim=start={start}:end={end},asetpts=PTS-STARTPTS[{a_label}]")
             vfilters.append(f"[0:v]trim=start={start}:end={end},setpts=PTS-STARTPTS[{v_label}]")
-        # --- 音声もconcatで単純連結する（acrossfadeは使わない）---
+        # --- セリフ間隔しきい値0ならacrossfadeせず単純連結 ---
         if len(a_labels) == 1:
             aout = a_labels[0]
         else:
-            # [a0][a1]...[aN]concat=n=N:v=0:a=1[aout]
             a_concat_labels = ''.join([f'[{a}]' for a in a_labels])
             aout = 'aout'
             afilters.append(f"{a_concat_labels}concat=n={len(a_labels)}:v=0:a=1[{aout}]")
+        # --- 以降は従来通り ---
         # ※acrossfadeを使う場合は下記を有効化
         # prev = a_labels[0]
         # for idx in range(1, len(a_labels)):

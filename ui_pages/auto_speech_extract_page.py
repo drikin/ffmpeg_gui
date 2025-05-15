@@ -64,9 +64,9 @@ class AutoSpeechExtractPage(QWidget):
         # セリフ間隔しきい値入力UI（横並び）
         merge_gap_layout = QHBoxLayout()
         merge_gap_label = QLabel("セリフ間隔しきい値（秒）:")
-        self.edit_merge_gap = QLineEdit()
+        self.edit_merge_gap = QLineEdit("0.0")
         self.edit_merge_gap.setPlaceholderText("例: 3.0")
-        self.edit_merge_gap.setText(str(self.settings.value("merge_gap_sec", 3.0, type=float)))
+        self.edit_merge_gap.setText(str(self.settings.value("merge_gap_sec", 0.0, type=float)))
         merge_gap_layout.addWidget(merge_gap_label)
         merge_gap_layout.addWidget(self.edit_merge_gap)
         layout.addLayout(merge_gap_layout)
@@ -149,7 +149,7 @@ class AutoSpeechExtractPage(QWidget):
         try:
             merge_gap_sec = float(self.edit_merge_gap.text())
         except Exception:
-            merge_gap_sec = 3.0
+            merge_gap_sec = 0.0
         self._merge_gap_sec = merge_gap_sec
         # 言語設定を取得
         language = self.combo_language.currentData()
@@ -174,7 +174,7 @@ class AutoSpeechExtractPage(QWidget):
             language = getattr(self, '_language', 'ja')
             word_level = getattr(self, '_word_level', False)
             api_key = getattr(self, '_api_key', None)
-            merge_gap_sec = getattr(self, '_merge_gap_sec', 3.0)
+            merge_gap_sec = getattr(self, '_merge_gap_sec', 0.0)
 
             # 外部SRT指定時はtranscribe_to_srtをスキップ
             if hasattr(self, 'srt_path') and self.srt_path:
