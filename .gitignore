@@ -13,3 +13,7 @@ dist/
 .DS_Store
 .idea/
 .vscode/
+
+# Python cache directories
+__pycache__/
+**/__pycache__/
