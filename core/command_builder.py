@@ -143,10 +143,15 @@ class CommandBuilder:
         if not need_reencode:
             cmd = [
                 "ffmpeg", "-y",
+                "-fflags", "+genpts",  # タイムスタンプを再生成
                 "-f", "concat",
                 "-safe", "0",
                 "-i", concat_list.name,
-                "-c", "copy",
+                "-c:v", "copy",  # ビデオコーデックをコピー
+                "-c:a", "copy",  # オーディオコーデックをコピー
+                "-map", "0:v",   # ビデオストリームのみマッピング
+                "-map", "0:a",   # オーディオストリームのみマッピング
+                "-async", "1",    # 音声同期を改善
                 str(output_path)
             ]
         else:
@@ -156,14 +161,24 @@ class CommandBuilder:
             for f in input_files:
                 cmd += ["-i", str(f)]
             n = len(input_files)
-            # 映像・音声両方concatする
-            filter_complex = f"concat=n={n}:v=1:a=1 [outv][outa]"
+            # 映像・音声両方concatする（aformatフィルタでフォーマットを正規化）
+            filter_complex = (
+                f"[0:v]fps=30000/1001,setpts=N/FRAME_RATE/TB[v0];"
+                f"[0:a]aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo[a0];"
+                f"[v0][a0]concat=n={n}:v=1:a=1[outv][outa]"
+            )
             cmd += [
                 "-filter_complex", filter_complex,
                 "-map", "[outv]",
                 "-map", "[outa]",
                 "-c:v", "h264_videotoolbox",
+                "-pix_fmt", "yuv420p",
+                "-profile:v", "high",
+                "-level", "4.2",
                 "-c:a", "aac",
+                "-b:a", "192k",
+                "-ar", "48000",
+                "-movflags", "+faststart",
                 str(output_path)
             ]
         return cmd, concat_list.name, need_reencode, format_list, force_reason
