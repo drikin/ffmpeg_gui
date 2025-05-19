@@ -21,35 +21,34 @@ class CommandBuilder:
         add_limiter: bool = True
     ) -> list:
         """
-        ffmpeg 7.1.1以降のラウドネス補正コマンドを生成（2パスloudnorm対応）
-        MOVファイルの場合はmp4出力に強制
+        映像を再エンコードせず、音声のみをloudnormで補正するコマンドを生成
+        - 映像はそのままコピー
+        - 音声は一時ファイルに抽出して補正後、映像とマージ
         """
-        # MOV入力時はmp4出力に強制
-        force_mp4 = False
-        if str(input_path).lower().endswith('.mov'):
-            force_mp4 = True
-            output_path = output_path.with_suffix('.mp4') if hasattr(output_path, 'with_suffix') else Path(str(output_path)).with_suffix('.mp4')
-        """
-        ffmpeg 7.1.1以降のラウドネス補正コマンドを生成（2パスloudnorm対応）
-        - measured_params: 2パス目用の測定値dict（measured_I, measured_TP, measured_LRA, measured_thresh, offset など）
-        - true_peak_limit: True Peak制限値（デフォルト-1.5dBTP）
-        - add_limiter: Trueでalimiterを追加
-        既存のAPI互換維持
-        """
-        # 2パス目（measured_paramsあり）
-        if measured_params is not None:
-            # loudnorm 2pass
-            lnorm = (
-                f"loudnorm=I={'-18' if material_mode else '-14'}:LRA={'11' if material_mode else '7'}:TP={true_peak_limit}:"
-                f"measured_I={measured_params.get('input_i')}:measured_TP={measured_params.get('input_tp')}:"
-                f"measured_LRA={measured_params.get('input_lra')}:measured_thresh={measured_params.get('input_thresh')}:"
-                f"offset={measured_params.get('target_offset')}:linear=true:print_format=summary"
-            )
-            af = lnorm
-            if add_limiter:
-                af += f",alimiter=limit={true_peak_limit}dB"
-        else:
-            # 1パス目 or 旧互換
+        import tempfile
+        import os
+        import shutil
+        from pathlib import Path
+
+        # 一時ディレクトリを作成
+        temp_dir = tempfile.mkdtemp(prefix='ffmpeg_gui_')
+        temp_video = os.path.join(temp_dir, 'video.mp4')
+        temp_audio = os.path.join(temp_dir, 'audio.aac')
+        temp_audio_norm = os.path.join(temp_dir, 'audio_norm.aac')
+
+        try:
+            # 1. 映像をそのままコピー（再エンコードなし）
+            video_cmd = [
+                'ffmpeg',
+                '-y',
+                '-i', str(input_path),
+                '-c:v', 'copy',
+                '-an',  # 音声を無効化
+                temp_video
+            ]
+
+            # 2. 音声を抽出して補正
+            # オーディオフィルターの構築
             if material_mode:
                 af = f"loudnorm=I=-18:LRA=11:TP={true_peak_limit}:linear=true:print_format=summary"
             elif use_dynaudnorm:
@@ -59,25 +58,53 @@ class CommandBuilder:
                 )
             else:
                 af = f"loudnorm=I=-14:LRA=7:TP={true_peak_limit}:print_format=summary"
+            
             if add_limiter:
                 af += f",alimiter=limit={true_peak_limit}dB"
-        cmd = [
-            "ffmpeg",
-            "-y",
-            "-i", str(input_path),
-            "-af", af,
-            "-c:v", "copy",
-            "-c:a", "aac",
-            "-b:a", "192k",
-            # MOV/MP4入力時はデータストリーム(rtmd等)を除外し、映像・音声ストリームのみmap
-        ]
-        if str(input_path).lower().endswith(('.mov', '.mp4')):
-            cmd += ["-map", "0:v", "-map", "0:a", "-map_metadata", "0", "-f", "mp4", "-movflags", "+faststart"]
-        else:
-            # その他コンテナは従来通り全ストリームmap
-            cmd += ["-map", "0", "-map_metadata", "0", "-movflags", "+write_colr+use_metadata_tags+faststart"]
-        cmd.append(str(output_path))
-        return cmd
+
+            audio_cmd = [
+                'ffmpeg',
+                '-y',
+                '-i', str(input_path),
+                '-vn',  # 映像を無効化
+                '-c:a', 'pcm_s16le',  # 一時的に非圧縮PCMで抽出
+                '-f', 'wav',
+                'pipe:1'
+            ]
+
+            audio_filter_cmd = [
+                'ffmpeg',
+                '-y',
+                '-f', 'wav',
+                '-i', 'pipe:0',
+                '-af', af,
+                '-c:a', 'aac',
+                '-b:a', '192k',
+                temp_audio_norm
+            ]
+
+            # 3. 映像と補正済み音声をマージ
+            merge_cmd = [
+                'ffmpeg',
+                '-y',
+                '-i', temp_video,
+                '-i', temp_audio_norm,
+                '-c:v', 'copy',
+                '-c:a', 'copy',
+                '-map', '0:v',
+                '-map', '1:a',
+                '-movflags', '+faststart',
+                str(output_path)
+            ]
+
+            # コマンドのリストを返す（実行は呼び出し元で行う）
+            return [video_cmd, audio_cmd, audio_filter_cmd, merge_cmd]
+
+        except Exception as e:
+            # エラーが発生したら一時ファイルを削除
+            if os.path.exists(temp_dir):
+                shutil.rmtree(temp_dir, ignore_errors=True)
+            raise e
 
 
     @staticmethod

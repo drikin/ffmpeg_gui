@@ -214,97 +214,76 @@ class LoudnessPage(QWidget):
                         self.append_logbox.emit(f"[エラー] {input_path.name}: コピー失敗")
                     continue
 
-                # 1パス目: loudnorm測定
-                self.append_logbox.emit(f"[測定] {input_path.name} ラウドネス測定中...")
-                measured, loudnorm_log = FFprobeLoudness.measure_loudness(input_path)
-                # 測定値の異常判定（inf, -inf, None, 範囲外）
-                invalid = False
-                if measured is not None:
-                    import math
-                    for k in ("input_i", "input_tp", "input_lra", "input_thresh", "target_offset"):
-                        v = measured.get(k)
-                        try:
-                            v_num = float(v)
-                            if v_num == float("inf") or v_num == float("-inf") or math.isnan(v_num):
-                                invalid = True
-                                break
-                        except Exception:
-                            invalid = True
-                            break
-                if measured is None or invalid:
-                    fail_item = QTableWidgetItem("音声異常/無音/測定失敗")
-                    fail_item.setForeground(QColor("red"))
-                    self.table.setItem(row, 1, fail_item)
-                    self.append_logbox.emit(f"[エラー] {input_path.name}: 音声ストリーム異常または無音のため補正不可\n--- ffmpeg log ---\n{loudnorm_log.strip()}\n---")
-                    continue
-
-                # 2パス目: loudnorm補正
+                # 映像と音声を分離して処理する新しいフロー
                 tp_limit = -1.5
-                retry_count = 0
-                max_retry = 2
-                while retry_count <= max_retry:
-                    log_lines = []
-                    def log_callback(line):
-                        log_lines.append(line)
-                        self.update_log.emit(row, line)
-                        self.append_logbox.emit(line)
-                    cmd = CommandBuilder.build_loudness_normalization_cmd(
+                self.append_logbox.emit(f"[処理] {input_path.name} を処理中...")
+                
+                try:
+                    # コマンドを生成（複数のコマンドが返される）
+                    cmds = CommandBuilder.build_loudness_normalization_cmd(
                         input_path, output_path,
                         use_dynaudnorm=use_dynaudnorm,
                         material_mode=material_mode,
-                        measured_params=measured,
+                        measured_params=None,
                         true_peak_limit=tp_limit,
                         add_limiter=True
                     )
-                    self.append_logbox.emit(f"[補正] {input_path.name} loudnorm補正（TP={tp_limit}dBTP, リトライ{retry_count}）...")
-                    ret = Executor.run_command(cmd, log_callback)
-                    summary = parse_loudnorm_summary(log_lines)
-                    warn_msg = summary.get('warning', '')
-                    tp_over = (
-                        'output_tp' in summary and
-                        summary['output_tp'] is not None and
-                        summary['output_tp'] > tp_limit
+                    
+                    # 1. 映像を抽出（再エンコードなし）
+                    self.append_logbox.emit(f"[1/3] 映像を抽出中...")
+                    ret = Executor.run_command(cmds[0])
+                    if ret != 0:
+                        raise Exception("映像の抽出に失敗しました")
+                    
+                    # 2. 音声を抽出して補正
+                    self.append_logbox.emit(f"[2/3] 音声を補正中...")
+                    
+                    # 音声抽出とフィルタリングをパイプで接続
+                    import subprocess
+                    extract_proc = subprocess.Popen(cmds[1], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                    filter_proc = subprocess.Popen(
+                        cmds[2], 
+                        stdin=extract_proc.stdout,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE
                     )
-                    if (('warning' in summary or tp_over) and retry_count < max_retry):
-                        # クリッピングやTP超過時はTP制限値を下げてリトライ
-                        tp_limit -= 0.5
-                        self.append_logbox.emit(f"[再試行] {input_path.name} True Peak制限値を{tp_limit}dBTPに下げて再補正")
-                        retry_count += 1
-                        continue
-                    # 状態セルの色付き表示
-                    if tp_over:
-                        warn_msg += f" True Peak超過: {summary['output_tp']} dBTP"
-                    if warn_msg:
-                        status_item = QTableWidgetItem(f"警告: {warn_msg}")
-                        status_item.setForeground(QColor("red"))
-                        self.table.setItem(row, 1, status_item)
-                        self.append_logbox.emit(f"[警告] {input_path.name}: {warn_msg}")
-                    else:
-                        status_item = QTableWidgetItem("OK")
-                        status_item.setForeground(QColor("green"))
-                        self.table.setItem(row, 1, status_item)
-                    # 詳細もログ欄に表示
-                    detail = f"出力LUFS: {summary.get('output_lufs','')} / Peak: {summary.get('output_tp','')}dBTP / LRA: {summary.get('output_lra','')}"
-                    self.update_log.emit(row, detail)
-                    if ret == 0:
-                        # 結合ページのリストに追加
-                        if self.concat_page is not None:
-                            self.concat_page.add_files_signal.emit([str(output_path)])
-                        # ラウドネス測定ページのファイルリストにも追加
-                        if hasattr(self, 'measure_page') and self.measure_page is not None:
-                            # デバッグ: Signal発火直前に情報出力
-                            if hasattr(self, 'log_console'):
-                                self.log_console.append(f"[DEBUG] measure_page: {self.measure_page}")
-                                self.log_console.append(f"[DEBUG] measure_page.add_files_signal: {getattr(self.measure_page, 'add_files_signal', None)}")
-                                self.log_console.append(f"[DEBUG] measure_page.add_files: {getattr(self.measure_page, 'add_files', None)}")
-                                self.log_console.append(f"[DEBUG] emit add_files_signal: {[str(output_path)]}")
-                            self.measure_page.add_files_signal.emit([str(output_path)])
-                            if hasattr(self, 'log_console'):
-                                self.log_console.append(f"[DEBUG] add_files_signal.emit完了")
-                    else:
-                        fail_item = QTableWidgetItem("失敗")
-                        fail_item.setForeground(QColor("red"))
-                        self.table.setItem(row, 1, fail_item)
-                    break
+                    
+                    # プロセスの終了を待機
+                    _, stderr = filter_proc.communicate()
+                    if filter_proc.returncode != 0:
+                        raise Exception(f"音声の補正に失敗しました: {stderr.decode('utf-8', errors='ignore')}")
+                    
+                    # 3. 映像と補正済み音声をマージ
+                    self.append_logbox.emit(f"[3/3] 映像と音声をマージ中...")
+                    ret = Executor.run_command(cmds[3])
+                    if ret != 0:
+                        raise Exception("映像と音声のマージに失敗しました")
+                    
+                    # 成功時の処理
+                    status_item = QTableWidgetItem("完了")
+                    status_item.setForeground(QColor("green"))
+                    self.table.setItem(row, 1, status_item)
+                    
+                    # 結合ページのリストに追加
+                    if self.concat_page is not None:
+                        self.concat_page.add_files_signal.emit([str(output_path)])
+                    # ラウドネス測定ページのファイルリストにも追加
+                    if hasattr(self, 'measure_page') and self.measure_page is not None:
+                        self.measure_page.add_files_signal.emit([str(output_path)])
+                        
+                except Exception as e:
+                    # エラー処理
+                    error_msg = str(e)
+                    self.append_logbox.emit(f"[エラー] {input_path.name}: {error_msg}")
+                    fail_item = QTableWidgetItem("失敗")
+                    fail_item.setForeground(QColor("red"))
+                    self.table.setItem(row, 1, fail_item)
+                    
+                    # 一時ファイルのクリーンアップ
+                    import shutil
+                    temp_dir = os.path.dirname(cmds[0][-1]) if cmds and len(cmds) > 0 and len(cmds[0]) > 0 else None
+                    if temp_dir and os.path.exists(temp_dir):
+                        shutil.rmtree(temp_dir, ignore_errors=True)
+                
 
         threading.Thread(target=task, daemon=True).start()
