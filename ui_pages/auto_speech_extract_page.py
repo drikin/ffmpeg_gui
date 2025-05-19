@@ -172,11 +172,6 @@ class AutoSpeechExtractPage(QWidget):
             self.log_text.append("入力・出力ファイルを選択してください")
             return
             
-        # 前回の結果をクリア
-        self.srt_path = None  # SRTファイルパスをリセット
-        self.segments = []     # セグメントをクリア
-        self.edit_srt.clear()  # SRTファイル入力フィールドをクリア
-        
         # セリフ間隔しきい値（秒）を取得
         try:
             merge_gap_sec = float(self.edit_merge_gap.text())
@@ -205,19 +200,87 @@ class AutoSpeechExtractPage(QWidget):
         
         # ログをクリアして新しい処理開始を表示
         self.log_text.clear()
-        self.log_text.append(f"=== 新しい音声認識を開始します ===")
-        self.log_text.append(f"モデル: {model}, 言語: {self.combo_language.currentText()}, ワードレベル: {'ON' if word_level else 'OFF'}")
-        self.log_text.append(f"セリフ間隔しきい値: {merge_gap_sec}秒")
-        self.log_text.append("-" * 50)
         
-        # 常にWhisperで音声認識を実行（外部SRTファイルがあっても無視）
-        self.log_text.append(f"Whisperで音声認識を開始します...")
+        # SRTファイルが指定されているかチェック
+        srt_path = self.edit_srt.text().strip()
+        if srt_path and os.path.exists(srt_path):
+            self.srt_path = srt_path
+            self.log_text.append(f"=== 外部SRTファイルを使用します ===")
+            self.log_text.append(f"SRTファイル: {srt_path}")
+            self.log_text.append(f"セリフ間隔しきい値: {merge_gap_sec}秒")
+            self.log_text.append("-" * 50)
+            
+            # SRTファイルから直接セグメントを抽出
+            threading.Thread(target=self._process_srt_file, daemon=True).start()
+        else:
+            # 前回の結果をクリア
+            self.srt_path = None
+            self.segments = []
+            self.log_text.append(f"=== 新しい音声認識を開始します ===")
+            self.log_text.append(f"モデル: {model}, 言語: {self.combo_language.currentText()}, ワードレベル: {'ON' if word_level else 'OFF'}")
+            self.log_text.append(f"セリフ間隔しきい値: {merge_gap_sec}秒")
+            self.log_text.append("-" * 50)
+            
+            # Whisperで音声認識を実行
+            self.log_text.append(f"Whisperで音声認識を開始します...")
+            threading.Thread(target=self._run_extract_task, daemon=True).start()
+    
+    def _process_srt_file(self):
+        """外部SRTファイルを処理する"""
+        try:
+            merge_gap_sec = getattr(self, '_merge_gap_sec', 0.0)
+            
+            # SRTファイルをパースしてセグメントを取得
+            self._append_log(f"SRTファイルを解析中: {self.srt_path}")
+            self.segments = self.extractor.parse_srt_segments(
+                self.srt_path, 
+                merge_gap_sec=merge_gap_sec, 
+                reference_media_path=self.file_path
+            )
+            
+            if not self.segments:
+                self._append_log("[エラー] 有効なセグメントが見つかりませんでした")
+                return
+                
+            # セグメント情報をログに出力
+            self._log_segment_info()
+            
+            # FFmpegコマンドを実行
+            self._execute_ffmpeg_command()
+            
+        except Exception as e:
+            self._append_log(f"[エラー] SRTファイルの処理中にエラーが発生しました: {str(e)}")
+    
+    def _log_segment_info(self):
+        """セグメント情報をログに出力する"""
+        # セグメント情報をログに出力
+        self._append_log("\n[セリフ区間リスト]")
+        for i, (st, ed) in enumerate(self.segments, 1):
+            self._append_log(f"  {i:2d}. {st:7.2f}秒 ～ {ed:7.2f}秒  (長さ: {ed-st:6.2f}秒)")
         
-        # 新しいスレッドで処理を開始
-        threading.Thread(target=self._run_extract_task, daemon=True).start()
+        # 元動画の長さを取得
+        try:
+            import subprocess, re
+            cmd = ["ffprobe", "-v", "error", "-show_entries", "format=duration", 
+                  "-of", "default=noprint_wrappers=1:nokey=1", self.file_path]
+            out = subprocess.check_output(cmd, encoding="utf-8", errors="ignore").strip()
+            original_duration = float(re.findall(r"[\d.]+", out)[0])
+            
+            # トリム後の合計時間を計算
+            total_trimmed = sum(ed - st for st, ed in self.segments)
+            
+            # トリム情報をログに出力
+            self._append_log("\n=== トリム情報 ===")
+            self._append_log(f"・元動画の長さ: {original_duration:.2f}秒")
+            self._append_log(f"・トリム後の長さ: {total_trimmed:.2f}秒")
+            self._append_log(f"・削除された合計時間: {original_duration - total_trimmed:.2f}秒")
+            
+        except Exception as e:
+            self._append_log(f"[警告] 動画情報の取得中にエラーが発生しました: {e}")
 
 
     def _run_extract_task(self):
+        """Whisperを使用して音声認識を実行する"""
         try:
             language = getattr(self, '_language', 'ja')
             word_level = getattr(self, '_word_level', False)
@@ -259,7 +322,7 @@ class AutoSpeechExtractPage(QWidget):
             self._append_log(f"セリフ間隔しきい値: {merge_gap_sec}秒")
             
             try:
-                # 常にWhisperで音声認識を実行
+                # Whisperで音声認識を実行
                 srt_path = self.extractor.transcribe_to_srt(
                     self.file_path, srt_path,
                     language=language,
@@ -270,102 +333,42 @@ class AutoSpeechExtractPage(QWidget):
                     merge_gap_sec=merge_gap_sec
                 )
                 
-                # セグメント情報を取得してログに出力
-                try:
-                    segments = self.extractor.parse_srt_segments(srt_path, merge_gap_sec=merge_gap_sec, reference_media_path=self.file_path)
-                    self.segments = segments
-                    
-                    # カット区間数
-                    num_segments = len(segments)
-                    # カット後合計再生時間
-                    total_speech = sum(ed-st for st, ed in segments)
-                    # 元動画の再生時間を取得
-                    import subprocess, re
-                    cmd = ["ffprobe", "-v", "error", "-show_entries", "format=duration", 
-                          "-of", "default=noprint_wrappers=1:nokey=1", self.file_path]
-                    out = subprocess.check_output(cmd, encoding="utf-8", errors="ignore").strip()
-                    original_duration = float(re.findall(r"[\d.]+", out)[0])
-                    
-                    self._append_log("\n[セリフ区間リスト]")
-                    for st, ed in segments:
-                        self._append_log(f"  {st:.2f} - {ed:.2f}秒")
-                    
-                    self._append_log("\n[再生時間]")
-                    self._append_log(f"  元動画: {original_duration:.2f} 秒")
-                    self._append_log(f"  切り取り後(理論値): {total_speech:.2f} 秒")
-                    self._append_log(f"  差分(理論値): {original_duration - total_speech:.2f} 秒")
-                    
-                except Exception as e:
-                    self._append_log(f"[警告] セグメント情報の取得に失敗しました: {str(e)}")
+                # セグメント情報を取得
+                self.segments = self.extractor.parse_srt_segments(
+                    srt_path, 
+                    merge_gap_sec=merge_gap_sec, 
+                    reference_media_path=self.file_path
+                )
                 
-                self.srt_path = srt_path
-                self._append_log("\n[完了] 音声認識が完了しました")
+                if not self.segments:
+                    self._append_log("[エラー] 有効なセグメントが見つかりませんでした")
+                    return
+                
+                # セグメント情報をログに出力
+                self._log_segment_info()
+                
+                # FFmpegコマンドを実行
+                self._execute_ffmpeg_command()
                 
             except Exception as e:
                 self._append_log(f"[エラー] 音声認識中にエラーが発生しました: {str(e)}")
                 raise
                 
-                # SRTファイルの内容をログに表示
-                try:
-                    with open(srt_path, 'r', encoding='utf-8') as f:
-                        srt_content = f.read()
-                    self._append_log("\n=== 文字起こし結果 (SRT) ===")
-                    self._append_log(srt_content)
-                    self._append_log("========================\n")
-                except Exception as e:
-                    self._append_log(f"[警告] SRTファイルの読み込みに失敗しました: {e}")
-
-            # セリフ間隔しきい値をparse_srt_segmentsに渡す
-            segments = self.extractor.parse_srt_segments(srt_path, merge_gap_sec=merge_gap_sec, reference_media_path=self.file_path)
-            self.segments = segments
+        except Exception as e:
+            self._append_log(f"[エラー] {str(e)}")
+    
+    def _execute_ffmpeg_command(self):
+        """FFmpegコマンドを実行する"""
+        try:
+            self._append_log(f"\nセグメント抽出完了: {len(self.segments)}区間\nFFmpegコマンド生成中...")
             
-            # 詳細なトリム情報を計算
-            try:
-                # 元動画の長さを取得
-                import subprocess, re
-                cmd = ["ffprobe", "-v", "error", "-show_entries", "format=duration", 
-                      "-of", "default=noprint_wrappers=1:nokey=1", self.file_path]
-                out = subprocess.check_output(cmd, encoding="utf-8", errors="ignore").strip()
-                original_duration = float(re.findall(r"[\d.]+", out)[0])
-                
-                # トリム後の合計時間を計算
-                total_trimmed = sum(ed - st for st, ed in segments)
-                
-                # トリムされた区間の情報を収集
-                trim_intervals = []
-                prev_end = 0.0
-                for i, (st, ed) in enumerate(segments):
-                    if st > prev_end + 0.1:  # 0.1秒以上のギャップがある場合
-                        trim_intervals.append((prev_end, st, st - prev_end))
-                    prev_end = ed
-                
-                # 最後のセグメントから動画終了までのトリム区間を追加
-                if prev_end < original_duration - 0.1:  # 0.1秒以上の余裕を持たせる
-                    trim_intervals.append((prev_end, original_duration, original_duration - prev_end))
-                
-                # トリム情報をログに出力
-                self._append_log("\n=== トリム情報 ===")
-                self._append_log(f"・元動画の長さ: {original_duration:.2f}秒")
-                self._append_log(f"・トリム後の長さ: {total_trimmed:.2f}秒")
-                self._append_log(f"・削除された合計時間: {original_duration - total_trimmed:.2f}秒")
-                self._append_log(f"・トリム区間数: {len(trim_intervals)}")
-                self._append_log("\n[トリムされた区間]")
-                
-                for i, (start, end, duration) in enumerate(trim_intervals, 1):
-                    self._append_log(f"  {i:2d}. {start:7.2f}秒 ～ {end:7.2f}秒  (長さ: {duration:6.2f}秒)")
-                
-                self._append_log("\n[残されたセリフ区間]")
-                for i, (st, ed) in enumerate(segments, 1):
-                    self._append_log(f"  {i:2d}. {st:7.2f}秒 ～ {ed:7.2f}秒  (長さ: {ed-st:6.2f}秒)")
-                
-                self._append_log("==================\n")
-                
-            except Exception as e:
-                self._append_log(f"[警告] トリム情報の計算中にエラーが発生しました: {e}")
+            # FFmpegコマンドを生成
+            ffmpeg_cmd = self.extractor.build_ffmpeg_commands(
+                self.file_path, 
+                self.segments, 
+                self.output_path
+            )
             
-            self._append_log(f"\nセグメント抽出完了: {len(segments)}区間\nFFmpegコマンド生成中...")
-
-            ffmpeg_cmd = self.extractor.build_ffmpeg_commands(self.file_path, segments, self.output_path)
             # build_ffmpeg_commandsが複数コマンドリストを返す場合に対応
             cmds = ffmpeg_cmd
             if isinstance(cmds, (list, tuple)) and len(cmds) > 0 and isinstance(cmds[0], list):
@@ -398,7 +401,7 @@ class AutoSpeechExtractPage(QWidget):
                 else:
                     self._append_log(f"\n[エラー] FFmpeg実行に失敗しました (return code={ret})")
         except Exception as e:
-            self._append_log(f"[エラー] {str(e)}")
+            self._append_log(f"[エラー] FFmpegコマンドの実行中にエラーが発生しました: {str(e)}")
 
     def _append_log(self, text):
         # メインスレッドでappend
