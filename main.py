@@ -55,6 +55,9 @@ class MainWindow(QMainWindow):
         self.stack.addWidget(self.video_concat_page)  # 動画結合
         self.auto_speech_extract_page = AutoSpeechExtractPage()
         self.stack.addWidget(self.auto_speech_extract_page)  # AIジェットカット
+        
+        # Connect video concatenation complete signal to auto speech extract page
+        self.video_concat_page.concatenation_complete.connect(self.on_concatenation_complete)
         self.slideshow_page = SlideshowPage()
         self.stack.addWidget(self.slideshow_page)  # スライドショー生成
         self.opening_generator_page = OpeningGeneratorPage()
@@ -80,6 +83,15 @@ class MainWindow(QMainWindow):
             QPushButton { background: #44475a; color: #f8f8f2; border-radius: 6px; padding: 8px; }
             QPushButton:hover { background: #6272a4; }
         """)
+
+    def on_concatenation_complete(self, output_file):
+        """Handle video concatenation completion"""
+        # Switch to the AIジェットカット tab
+        self.stack.setCurrentWidget(self.auto_speech_extract_page)
+        # Set the output file as input in the auto speech extract page
+        self.auto_speech_extract_page.set_input_file(output_file)
+        # Show a message in the log
+        self.auto_speech_extract_page.log_text.append(f"\n[INFO] 結合された動画が入力ファイルとして設定されました: {output_file}")
 
     def reset_all_file_lists(self):
         # 各ページのファイルリストをリセット

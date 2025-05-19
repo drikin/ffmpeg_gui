@@ -8,6 +8,7 @@ from core.executor import Executor
 import os
 import threading
 import shlex
+import tempfile
 
 class AutoSpeechExtractPage(QWidget):
     update_status = Signal(int, str)
@@ -25,12 +26,15 @@ class AutoSpeechExtractPage(QWidget):
         self.output_path = None
         self.settings = QSettings("drikin", "ffmpeg_gui")
 
-        # ログ表示を最上部に
+        from PySide6.QtWidgets import QSpacerItem, QSizePolicy
+
+        # ...（中略: 他UI部品の定義）...
+
+        # ログ表示エリア
         self.log_text = QTextEdit()
         self.log_text.setReadOnly(True)
-        self.log_text.setMinimumHeight(100)
-        self.log_text.setMaximumHeight(150)
-        layout.addWidget(self.log_text)
+        self.log_text.setMinimumHeight(200)  # 最小高さを設定
+        layout.addWidget(self.log_text, stretch=1)  # 伸縮可能に
 
         # Whisperワードレベル解析ON/OFF
         self.chk_word_level = QCheckBox("ワードレベルで解析する（word_timestamps）")
@@ -83,6 +87,23 @@ class AutoSpeechExtractPage(QWidget):
         lang_layout.addWidget(self.combo_language)
         layout.addLayout(lang_layout)
 
+        # Whisperモデル選択
+        model_layout = QHBoxLayout()
+        model_label = QLabel("Whisperモデル:")
+        self.combo_model = QComboBox()
+        self.combo_model.addItem("base (高速, 低精度)", "base")
+        self.combo_model.addItem("small (推奨)", "small")
+        self.combo_model.addItem("medium (高精度, 遅い)", "medium")
+        self.combo_model.addItem("large-v3 (最高精度, 非常に遅い)", "large-v3")
+        # 保存されているモデルを読み込み、デフォルトはsmall
+        saved_model = self.settings.value("whisper_model", "small", type=str)
+        index = self.combo_model.findData(saved_model)
+        if index >= 0:
+            self.combo_model.setCurrentIndex(index)
+        model_layout.addWidget(model_label)
+        model_layout.addWidget(self.combo_model)
+        layout.addLayout(model_layout)
+
         # 出力ファイル選択UI（横並び）
         output_layout = QHBoxLayout()
         output_label = QLabel("出力ファイル:")
@@ -107,13 +128,10 @@ class AutoSpeechExtractPage(QWidget):
         srt_layout.addWidget(btn_select_srt)
         layout.addLayout(srt_layout)
 
-        # --- 実行ボタンを一番最後に追加（常に下部に表示されるように） ---
+        # 実行ボタン
         self.btn_run = QPushButton("AIジェットカット")
         self.btn_run.clicked.connect(self.run_extract)
-        layout.addWidget(self.btn_run)
-
-        from PySide6.QtWidgets import QSpacerItem, QSizePolicy
-        layout.addItem(QSpacerItem(0, 0, QSizePolicy.Minimum, QSizePolicy.Expanding))
+        layout.addWidget(self.btn_run, alignment=Qt.AlignBottom)  # 下部に配置
 
     def select_srt_file(self):
         file, _ = QFileDialog.getOpenFileName(self, "SRTファイル選択", "", "字幕ファイル (*.srt)")
@@ -124,16 +142,24 @@ class AutoSpeechExtractPage(QWidget):
             self.srt_path = None
             self.edit_srt.setText("")
 
+    def set_input_file(self, file_path):
+        """Set the input file programmatically
+        
+        Args:
+            file_path (str): Path to the input file
+        """
+        self.file_path = file_path
+        self.edit_file.setText(file_path)
+        # オリジナルファイル名+_trim.mp4 をデフォルト出力ファイル名に設定
+        base, ext = os.path.splitext(file_path)
+        default_output = base + '_trim.mp4'
+        self.output_path = default_output
+        self.edit_output.setText(default_output)
+        
     def select_file(self):
         file, _ = QFileDialog.getOpenFileName(self, "動画ファイル選択", "", "動画ファイル (*.mp4 *.mov *.mkv *.avi)")
         if file:
-            self.file_path = file
-            self.edit_file.setText(file)
-            # オリジナルファイル名+_trim.mp4 をデフォルト出力ファイル名に設定
-            base, ext = os.path.splitext(file)
-            default_output = base + '_trim.mp4'
-            self.output_path = default_output
-            self.edit_output.setText(default_output)
+            self.set_input_file(file)
 
     def select_output(self):
         file, _ = QFileDialog.getSaveFileName(self, "出力ファイル選択", self.output_path if self.output_path else "", "動画ファイル (*.mp4)")
@@ -145,27 +171,49 @@ class AutoSpeechExtractPage(QWidget):
         if not self.file_path or not self.output_path:
             self.log_text.append("入力・出力ファイルを選択してください")
             return
+            
+        # 前回の結果をクリア
+        self.srt_path = None  # SRTファイルパスをリセット
+        self.segments = []     # セグメントをクリア
+        self.edit_srt.clear()  # SRTファイル入力フィールドをクリア
+        
         # セリフ間隔しきい値（秒）を取得
         try:
             merge_gap_sec = float(self.edit_merge_gap.text())
         except Exception:
             merge_gap_sec = 0.0
         self._merge_gap_sec = merge_gap_sec
+        
         # 言語設定を取得
         language = self.combo_language.currentData()
         self._language = language
+        
         # word_timestampsオプション
         word_level = self.chk_word_level.isChecked()
         self._word_level = word_level
+        
+        # モデル選択
+        model = self.combo_model.currentData()
+        self._model = model
+        
         # APIキー保存
         api_key = self.edit_api_key.text().strip()
         self.settings.setValue("openai_api_key", api_key)
         self.settings.setValue("word_level", word_level)
+        self.settings.setValue("whisper_model", model)
         self._api_key = api_key
-        if hasattr(self, 'srt_path') and self.srt_path:
-            self.log_text.append(f"外部SRTファイル指定あり: {self.srt_path}\nWhisperによる音声認識はスキップします")
-        else:
-            self.log_text.append(f"Whisperで音声認識中...（セリフ間隔しきい値: {merge_gap_sec}秒, 言語: {self.combo_language.currentText()}、ワードレベル: {'ON' if word_level else 'OFF'}）")
+        
+        # ログをクリアして新しい処理開始を表示
+        self.log_text.clear()
+        self.log_text.append(f"=== 新しい音声認識を開始します ===")
+        self.log_text.append(f"モデル: {model}, 言語: {self.combo_language.currentText()}, ワードレベル: {'ON' if word_level else 'OFF'}")
+        self.log_text.append(f"セリフ間隔しきい値: {merge_gap_sec}秒")
+        self.log_text.append("-" * 50)
+        
+        # 常にWhisperで音声認識を実行（外部SRTファイルがあっても無視）
+        self.log_text.append(f"Whisperで音声認識を開始します...")
+        
+        # 新しいスレッドで処理を開始
         threading.Thread(target=self._run_extract_task, daemon=True).start()
 
 
@@ -173,56 +221,149 @@ class AutoSpeechExtractPage(QWidget):
         try:
             language = getattr(self, '_language', 'ja')
             word_level = getattr(self, '_word_level', False)
+            model = getattr(self, '_model', 'small')
             api_key = getattr(self, '_api_key', None)
             merge_gap_sec = getattr(self, '_merge_gap_sec', 0.0)
+            
+            # 毎回新しいextractorインスタンスを作成してモデルを初期化
+            self.extractor = SpeechSegmentExtractor(whisper_model=model)
+            self._append_log(f"[INFO] Whisperモデル '{model}' を初期化中...")
 
-            # 外部SRT指定時はtranscribe_to_srtをスキップ
-            if hasattr(self, 'srt_path') and self.srt_path:
-                srt_path = self.srt_path
-                self._append_log(f"外部SRTファイルを利用します: {srt_path}\nWhisperによる音声認識は行いません")
-                # --- ここから外部SRTでも詳細ログ出力 ---
+            # 常に新しい一時ファイルを作成して使用（前回の結果を上書き）
+            with tempfile.NamedTemporaryFile(suffix='.srt', delete=False) as temp_srt:
+                srt_path = temp_srt.name
+            
+            # ログ出力用のコールバック関数
+            def log_callback(msg):
+                # Whisperのログや進捗情報をアプリのログエリアに表示
+                if (msg.startswith("  ") or 
+                    "Whisper" in msg or 
+                    "セリフ区間リスト" in msg or 
+                    "再生時間" in msg or 
+                    "元動画:" in msg or 
+                    "切り取り後" in msg or 
+                    "差分" in msg or
+                    "認識中" in msg or
+                    "モデル" in msg or
+                    "完了" in msg or
+                    "エラー" in msg.lower() or
+                    "warn" in msg.lower() or
+                    "info" in msg.lower()):
+                    self._append_log(msg)
+                # その他の詳細なログはデバッグ情報としてコンソールにのみ出力
+                else:
+                    print(f"[Whisper] {msg}")
+            
+            self._append_log(f"Whisperで音声認識を開始します...")
+            self._append_log(f"モデル: {model}, 言語: {self.combo_language.currentText()}, ワードレベル: {'ON' if word_level else 'OFF'}")
+            self._append_log(f"セリフ間隔しきい値: {merge_gap_sec}秒")
+            
+            try:
+                # 常にWhisperで音声認識を実行
+                srt_path = self.extractor.transcribe_to_srt(
+                    self.file_path, srt_path,
+                    language=language,
+                    log_func=log_callback,
+                    word_level=word_level,
+                    api_key=api_key,
+                    model=model,
+                    merge_gap_sec=merge_gap_sec
+                )
+                
+                # セグメント情報を取得してログに出力
                 try:
-                    segments = self.extractor.parse_srt_segments(srt_path, merge_gap_sec=merge_gap_sec)
+                    segments = self.extractor.parse_srt_segments(srt_path, merge_gap_sec=merge_gap_sec, reference_media_path=self.file_path)
                     self.segments = segments
+                    
                     # カット区間数
                     num_segments = len(segments)
                     # カット後合計再生時間
                     total_speech = sum(ed-st for st, ed in segments)
-                    # 元動画の再生時間
+                    # 元動画の再生時間を取得
                     import subprocess, re
-                    cmd = ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", self.file_path]
+                    cmd = ["ffprobe", "-v", "error", "-show_entries", "format=duration", 
+                          "-of", "default=noprint_wrappers=1:nokey=1", self.file_path]
                     out = subprocess.check_output(cmd, encoding="utf-8", errors="ignore").strip()
                     original_duration = float(re.findall(r"[\d.]+", out)[0])
-                    self._append_log(f"[再生時間]")
+                    
+                    self._append_log("\n[セリフ区間リスト]")
+                    for st, ed in segments:
+                        self._append_log(f"  {st:.2f} - {ed:.2f}秒")
+                    
+                    self._append_log("\n[再生時間]")
                     self._append_log(f"  元動画: {original_duration:.2f} 秒")
-                    self._append_log(f"  カット後(理論値): {total_speech:.2f} 秒")
-                    self._append_log(f"  区間数: {num_segments}")
-                    self._append_log(f"  短縮される合計時間: {original_duration-total_speech:.2f} 秒")
+                    self._append_log(f"  切り取り後(理論値): {total_speech:.2f} 秒")
+                    self._append_log(f"  差分(理論値): {original_duration - total_speech:.2f} 秒")
+                    
                 except Exception as e:
-                    self._append_log(f"[警告] 外部SRT情報の集計失敗: {e}")
-
-            else:
-                srt_path = self.extractor.transcribe_to_srt(
-                    self.file_path,
-                    language=language,
-                    word_timestamps=word_level,
-                    api_key=api_key,
-                    log_func=self._append_log,
-                    output_path=self.output_path
-                )
+                    self._append_log(f"[警告] セグメント情報の取得に失敗しました: {str(e)}")
+                
                 self.srt_path = srt_path
-                # SRTファイルの内容をログ出力
+                self._append_log("\n[完了] 音声認識が完了しました")
+                
+            except Exception as e:
+                self._append_log(f"[エラー] 音声認識中にエラーが発生しました: {str(e)}")
+                raise
+                
+                # SRTファイルの内容をログに表示
                 try:
-                    with open(srt_path, "r", encoding="utf-8") as f:
+                    with open(srt_path, 'r', encoding='utf-8') as f:
                         srt_content = f.read()
-                    self._append_log(f"SRT生成完了: {srt_path}\n--- SRT内容 ---\n{srt_content}\n--- END ---\nセグメント抽出中...")
+                    self._append_log("\n=== 文字起こし結果 (SRT) ===")
+                    self._append_log(srt_content)
+                    self._append_log("========================\n")
                 except Exception as e:
-                    self._append_log(f"SRT生成完了: {srt_path}\n[SRT内容の読込失敗: {e}]\nセグメント抽出中...")
+                    self._append_log(f"[警告] SRTファイルの読み込みに失敗しました: {e}")
 
             # セリフ間隔しきい値をparse_srt_segmentsに渡す
-            segments = self.extractor.parse_srt_segments(srt_path, merge_gap_sec=merge_gap_sec)
+            segments = self.extractor.parse_srt_segments(srt_path, merge_gap_sec=merge_gap_sec, reference_media_path=self.file_path)
             self.segments = segments
-            self._append_log(f"セグメント抽出完了: {len(segments)}区間\nFFmpegコマンド生成中...")
+            
+            # 詳細なトリム情報を計算
+            try:
+                # 元動画の長さを取得
+                import subprocess, re
+                cmd = ["ffprobe", "-v", "error", "-show_entries", "format=duration", 
+                      "-of", "default=noprint_wrappers=1:nokey=1", self.file_path]
+                out = subprocess.check_output(cmd, encoding="utf-8", errors="ignore").strip()
+                original_duration = float(re.findall(r"[\d.]+", out)[0])
+                
+                # トリム後の合計時間を計算
+                total_trimmed = sum(ed - st for st, ed in segments)
+                
+                # トリムされた区間の情報を収集
+                trim_intervals = []
+                prev_end = 0.0
+                for i, (st, ed) in enumerate(segments):
+                    if st > prev_end + 0.1:  # 0.1秒以上のギャップがある場合
+                        trim_intervals.append((prev_end, st, st - prev_end))
+                    prev_end = ed
+                
+                # 最後のセグメントから動画終了までのトリム区間を追加
+                if prev_end < original_duration - 0.1:  # 0.1秒以上の余裕を持たせる
+                    trim_intervals.append((prev_end, original_duration, original_duration - prev_end))
+                
+                # トリム情報をログに出力
+                self._append_log("\n=== トリム情報 ===")
+                self._append_log(f"・元動画の長さ: {original_duration:.2f}秒")
+                self._append_log(f"・トリム後の長さ: {total_trimmed:.2f}秒")
+                self._append_log(f"・削除された合計時間: {original_duration - total_trimmed:.2f}秒")
+                self._append_log(f"・トリム区間数: {len(trim_intervals)}")
+                self._append_log("\n[トリムされた区間]")
+                
+                for i, (start, end, duration) in enumerate(trim_intervals, 1):
+                    self._append_log(f"  {i:2d}. {start:7.2f}秒 ～ {end:7.2f}秒  (長さ: {duration:6.2f}秒)")
+                
+                self._append_log("\n[残されたセリフ区間]")
+                for i, (st, ed) in enumerate(segments, 1):
+                    self._append_log(f"  {i:2d}. {st:7.2f}秒 ～ {ed:7.2f}秒  (長さ: {ed-st:6.2f}秒)")
+                
+                self._append_log("==================\n")
+                
+            except Exception as e:
+                self._append_log(f"[警告] トリム情報の計算中にエラーが発生しました: {e}")
+            
+            self._append_log(f"\nセグメント抽出完了: {len(segments)}区間\nFFmpegコマンド生成中...")
 
             ffmpeg_cmd = self.extractor.build_ffmpeg_commands(self.file_path, segments, self.output_path)
             # build_ffmpeg_commandsが複数コマンドリストを返す場合に対応

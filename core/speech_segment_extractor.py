@@ -5,13 +5,96 @@ import whisper
 import tempfile
 import os
 import re
+import subprocess
+import mimetypes
 from typing import List, Tuple
 
 class SpeechSegmentExtractor:
-    def __init__(self, whisper_model: str = "large"):
-        self.model = whisper.load_model(whisper_model)
+    def __init__(self, whisper_model: str = "small"):
+        self.whisper_model = whisper_model
+        self.model = None  # 必要時に遅延ロード
+        self._load_model()
+        
+    def _load_model(self):
+        """モデルをロードする。既にロード済みの場合は何もしない。"""
+        if self.model is not None:
+            return
+            
+        try:
+            print(f"[INFO] Whisperモデル '{self.whisper_model}' をロード中...")
+            self.model = whisper.load_model(self.whisper_model)
+            if hasattr(self.model, 'name'):
+                print(f"[INFO] Whisperモデル '{self.model.name()}' のロードに成功しました")
+            else:
+                print(f"[INFO] Whisperモデルのロードに成功しました")
+        except Exception as e:
+            error_msg = f"[ERROR] Whisperモデル '{self.whisper_model}' のロードに失敗しました: {str(e)}"
+            print(error_msg)
+            self.model = None
+            raise RuntimeError(error_msg)
+    
+    def _ensure_model_loaded(self):
+        """モデルがロードされていることを確認し、必要に応じて再ロードする"""
+        try:
+            # モデルが変更されていたら再ロード
+            if self.model is not None and hasattr(self, 'whisper_model'):
+                current_model = getattr(self.model, 'name', lambda: 'unknown')()
+                if current_model != self.whisper_model:
+                    print(f"[INFO] モデルが変更されたため再ロード: {current_model} -> {self.whisper_model}")
+                    self.model = None
+            
+            # モデルがまだロードされていないか、Noneの場合はロードを試みる
+            if self.model is None:
+                self._load_model()
+                
+            # ロード後もNoneの場合は例外をスロー
+            if self.model is None:
+                raise RuntimeError("Whisperモデルのロードに失敗しました")
+                
+        except Exception as e:
+            error_msg = f"モデルのロード中にエラーが発生しました: {str(e)}"
+            print(f"[ERROR] {error_msg}")
+            self.model = None
+            raise RuntimeError(error_msg)
 
-    def transcribe_to_srt(self, audio_path: str, srt_path: str = None, language: str = 'ja', log_func=None, output_path: str = None, word_timestamps: bool = False, api_key: str = None) -> str:
+    def transcribe_to_srt(self, audio_path: str, srt_path: str = None, language: str = 'ja', log_func=None, output_path: str = None, word_level: bool = False, word_timestamps: bool = None, api_key: str = None, model: str = 'small', merge_gap_sec: float = 0.0) -> str:
+        def log(msg):
+            if log_func:
+                log_func(msg)
+            else:
+                print(msg)
+                
+        # 後方互換性のためword_timestampsも受け付けるが、word_levelを優先
+        if word_timestamps is not None:
+            word_level = word_timestamps
+            
+        # モデルが変更されたか、現在のモデルがNoneの場合は再ロードを試みる
+        model_changed = False
+        if not hasattr(self, 'whisper_model') or self.whisper_model != model:
+            log(f"[INFO] モデルが変更されました: {getattr(self, 'whisper_model', 'None')} -> {model}")
+            self.whisper_model = model
+            model_changed = True
+            
+        # モデルのロードを必要に応じて行う
+        if api_key is None:  # ローカルモデルのみロード
+            try:
+                # モデルが変更されたか、現在のモデルがNoneの場合は強制的に再ロード
+                if model_changed or self.model is None:
+                    log(f"[INFO] モデルを再ロードします: {self.whisper_model}")
+                    self.model = None  # 強制的に再ロード
+                    
+                self._ensure_model_loaded()
+                
+                if self.model is None:
+                    raise RuntimeError("Whisperモデルが正しくロードされていません")
+                    
+                log(f"[INFO] 使用中のモデル: {getattr(self.model, 'name', lambda: 'unknown')() if hasattr(self.model, 'name') else 'unknown'}")
+                
+            except Exception as e:
+                error_msg = f"Whisperモデルのロード中にエラーが発生しました: {str(e)}"
+                log(error_msg)
+                self.model = None  # エラーが発生した場合はモデルをクリア
+                raise RuntimeError(error_msg)
         """
         指定音声ファイルからWhisperでSRTを生成し、パスを返す
         language: 言語コード（'ja'=日本語, 'en'=英語, None=自動判定）
@@ -30,10 +113,13 @@ class SpeechSegmentExtractor:
         if api_key and api_key.startswith("sk-"):
             is_server = True
             use_openai_api = True
-        # word_timestampsオプションをWhisperに渡す
-        transcribe_kwargs = dict(task="transcribe", verbose=False, language=language if language != 'auto' else None)
-        if word_timestamps:
-            transcribe_kwargs["word_timestamps"] = True
+        # トランスクライブオプションを設定
+        transcribe_kwargs = dict(
+            task="transcribe",
+            verbose=False,
+            language=language if language != 'auto' else None,
+            word_timestamps=word_level
+        )
         # ログ: サーバー/ローカル判定
         if is_server:
             log("[INFO] Whisper API（サーバー）でワードレベル解析を実行します")
@@ -43,11 +129,7 @@ class SpeechSegmentExtractor:
         import sys
         import contextlib
         import io
-        import os  # ここで必ずインポート
         if use_openai_api:
-            import subprocess
-            import tempfile
-            import mimetypes
             try:
                 # 入力が動画またはwav等の場合はaac(m4a)に変換してからAPIに渡す
                 ext = os.path.splitext(audio_path)[1].lower()
@@ -85,6 +167,7 @@ class SpeechSegmentExtractor:
             # Whisperのstdout/stderrをキャプチャしてlog_funcに流す
             stdout_buf = io.StringIO()
             stderr_buf = io.StringIO()
+            log(f"[INFO] Whisperモデル '{self.whisper_model}' で音声認識を開始します...")
             with contextlib.redirect_stdout(stdout_buf), contextlib.redirect_stderr(stderr_buf):
                 result = self.model.transcribe(audio_path, **transcribe_kwargs)
             # キャプチャした内容をlog_funcに流す

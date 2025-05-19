@@ -10,6 +10,7 @@ from pathlib import Path
 
 class VideoConcatPage(QWidget):
     add_files_signal = Signal(list)
+    concatenation_complete = Signal(str)  # Signal emitted when concatenation is complete with output file path
     def __init__(self):
         super().__init__()
         layout = QVBoxLayout(self)
@@ -73,6 +74,8 @@ class VideoConcatPage(QWidget):
             ret = Executor.run_command(cmd, self.log_console.append)
             if ret == 0:
                 self.log_console.append(f"結合完了: {outfile}")
+                # Emit signal with the output file path
+                self.concatenation_complete.emit(str(outfile))
             else:
                 self.log_console.append("[エラー] 結合に失敗しました")
             # 一時リストファイル削除
