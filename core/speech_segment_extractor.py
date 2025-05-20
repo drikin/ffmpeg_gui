@@ -307,18 +307,36 @@ class SpeechSegmentExtractor:
                 merged.append(seg)
         return merged
 
-    def build_ffmpeg_commands(self, video_path: str, segments: List[Tuple[float, float]], output_path: str, merge_gap_sec: float = 0.0) -> str:
+    def build_ffmpeg_commands(self, video_path: str, segments: List[Tuple[float, float]], output_path: str, 
+                          merge_gap_sec: float = 0.0, crossfade_duration: float = 0.2, log_func=None) -> str:
         """
         FFmpegコマンド文字列を生成
-        セリフ間隔しきい値（merge_gap_sec）が0のときはSRTセグメント区間だけを切り出して単純連結（acrossfade無し）
-        0以外のときは従来通り（必要に応じてacrossfade/マージ）
+        
+        Args:
+            video_path: 入力動画ファイルのパス
+            segments: トリム範囲のリスト [(start1, end1), (start2, end2), ...]
+            output_path: 出力ファイルのパス
+            merge_gap_sec: セリフ間隔のマージ閾値（秒）
+            crossfade_duration: クロスフェードの持続時間（秒）
+            log_func: ログ出力用コールバック関数
+            
+        Returns:
+            FFmpegコマンドのリスト（複数のエンコーダオプションを試す場合）
         """
         if not segments or len(segments) == 0:
             return "# セリフ区間がありません"
+            
+        # ログ出力用のヘルパー関数
+        def log(msg):
+            if log_func:
+                log_func(msg)
+            
         afilters = []  # 音声フィルタ
         vfilters = []  # 映像フィルタ
         a_labels = []  # 各セグメント音声ラベル
         v_labels = []  # 各セグメント映像ラベル
+        
+        # 各セグメントをトリミング
         for idx, (start, end) in enumerate(segments):
             a_label = f"a{idx}"
             v_label = f"v{idx}"
@@ -326,22 +344,48 @@ class SpeechSegmentExtractor:
             v_labels.append(v_label)
             afilters.append(f"[0:a]atrim=start={start}:end={end},asetpts=PTS-STARTPTS[{a_label}]")
             vfilters.append(f"[0:v]trim=start={start}:end={end},setpts=PTS-STARTPTS[{v_label}]")
-        # --- セリフ間隔しきい値0ならacrossfadeせず単純連結 ---
-        if len(a_labels) == 1:
-            aout = a_labels[0]
+        
+        # クロスフェード処理（2つ以上のセグメントがあり、クロスフェードが有効な場合）
+        if len(a_labels) > 1 and crossfade_duration > 0:
+            log(f"\n[クロスフェード処理] クロスフェード時間: {crossfade_duration:.3f}秒")
+            
+            # クロスフェード用に各セグメントの最後に余分な時間を追加
+            for i in range(len(a_labels)):
+                afilters.append(f"[{a_labels[i]}]apad=pad_dur={crossfade_duration}[p{i}]")
+                a_labels[i] = f"p{i}"
+            
+            # クロスフェードを適用
+            prev = a_labels[0]
+            for i in range(1, len(a_labels)):
+                curr = a_labels[i]
+                out = f"cf{i}"
+                
+                # クロスフェードが適用される区間をログに出力
+                prev_seg_idx = i-1
+                curr_seg_idx = i
+                prev_start, prev_end = segments[prev_seg_idx]
+                curr_start, curr_end = segments[curr_seg_idx]
+                
+                # クロスフェードが適用される時間範囲を計算
+                fade_start = max(prev_start, prev_end - crossfade_duration)
+                fade_end = min(curr_start + crossfade_duration, curr_end)
+                
+                log(f"  セグメント {prev_seg_idx+1} と {curr_seg_idx+1} の間にクロスフェードを適用:")
+                log(f"    前のセグメント: {fade_start:.3f} - {prev_end:.3f} 秒")
+                log(f"    次のセグメント: {curr_start:.3f} - {fade_end:.3f} 秒")
+                log(f"    クロスフェード区間: {fade_start:.3f} - {fade_end:.3f} 秒 (長さ: {fade_end-fade_start:.3f}秒)")
+                
+                afilters.append(f"[{prev}][{curr}]acrossfade=d={crossfade_duration}:c1=tri:c2=tri[{out}]")
+                prev = out
+            aout = prev
         else:
-            a_concat_labels = ''.join([f'[{a}]' for a in a_labels])
-            aout = 'aout'
-            afilters.append(f"{a_concat_labels}concat=n={len(a_labels)}:v=0:a=1[{aout}]")
-        # --- 以降は従来通り ---
-        # ※acrossfadeを使う場合は下記を有効化
-        # prev = a_labels[0]
-        # for idx in range(1, len(a_labels)):
-        #     curr = a_labels[idx]
-        #     out = f"ac{idx}"
-        #     afilters.append(f"[{prev}][{curr}]acrossfade=d={acf_duration}[{out}]")
-        #     prev = out
-        # aout = prev  # ←acrossfadeの最終出力
+            # 単純連結
+            if len(a_labels) == 1:
+                aout = a_labels[0]
+            else:
+                a_concat_labels = ''.join([f'[{a}]' for a in a_labels])
+                aout = 'aout'
+                afilters.append(f"{a_concat_labels}concat=n={len(a_labels)}:v=0:a=1[{aout}]")
 
         # 映像concat
         vconcat_labels = ''.join([f'[{v}]' for v in v_labels])

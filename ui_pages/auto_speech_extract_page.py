@@ -74,6 +74,27 @@ class AutoSpeechExtractPage(QWidget):
         merge_gap_layout.addWidget(merge_gap_label)
         merge_gap_layout.addWidget(self.edit_merge_gap)
         layout.addLayout(merge_gap_layout)
+        
+        # クロスフェード設定
+        crossfade_layout = QHBoxLayout()
+        self.chk_crossfade = QCheckBox("セグメント間をクロスフェードでつなぐ")
+        self.chk_crossfade.setChecked(self.settings.value("enable_crossfade", True, type=bool))
+        self.chk_crossfade.stateChanged.connect(self._update_crossfade_ui)
+        crossfade_layout.addWidget(self.chk_crossfade)
+        
+        self.lbl_crossfade_duration = QLabel("クロスフェード時間（秒）:")
+        self.edit_crossfade_duration = QLineEdit()
+        self.edit_crossfade_duration.setPlaceholderText("0.2")
+        self.edit_crossfade_duration.setText(str(self.settings.value("crossfade_duration", 0.2, type=float)))
+        self.edit_crossfade_duration.setFixedWidth(80)
+        
+        crossfade_layout.addWidget(self.lbl_crossfade_duration)
+        crossfade_layout.addWidget(self.edit_crossfade_duration)
+        crossfade_layout.addStretch()
+        layout.addLayout(crossfade_layout)
+        
+        # クロスフェードUIの初期状態を更新
+        self._update_crossfade_ui()
 
         # 言語選択コンボボックス（Whisper認識言語）
         lang_layout = QHBoxLayout()
@@ -167,6 +188,12 @@ class AutoSpeechExtractPage(QWidget):
             self.output_path = file
             self.edit_output.setText(file)
 
+    def _update_crossfade_ui(self):
+        """クロスフェードのUI状態を更新"""
+        enabled = self.chk_crossfade.isChecked()
+        self.lbl_crossfade_duration.setEnabled(enabled)
+        self.edit_crossfade_duration.setEnabled(enabled)
+    
     def run_extract(self):
         if not self.file_path or not self.output_path:
             self.log_text.append("入力・出力ファイルを選択してください")
@@ -178,6 +205,21 @@ class AutoSpeechExtractPage(QWidget):
         except Exception:
             merge_gap_sec = 0.0
         self._merge_gap_sec = merge_gap_sec
+        
+        # クロスフェード設定を取得
+        enable_crossfade = self.chk_crossfade.isChecked()
+        try:
+            crossfade_duration = float(self.edit_crossfade_duration.text())
+            if crossfade_duration < 0:
+                crossfade_duration = 0.0
+            elif crossfade_duration > 5.0:  # 最大5秒まで
+                crossfade_duration = 5.0
+        except Exception:
+            crossfade_duration = 0.2  # デフォルト値
+        
+        # 設定を保存
+        self.settings.setValue("enable_crossfade", enable_crossfade)
+        self.settings.setValue("crossfade_duration", crossfade_duration)
         
         # 言語設定を取得
         language = self.combo_language.currentData()
@@ -197,6 +239,10 @@ class AutoSpeechExtractPage(QWidget):
         self.settings.setValue("word_level", word_level)
         self.settings.setValue("whisper_model", model)
         self._api_key = api_key
+        
+        # クロスフェード設定をインスタンス変数に保存
+        self._enable_crossfade = enable_crossfade
+        self._crossfade_duration = crossfade_duration if enable_crossfade else 0.0
         
         # ログをクリアして新しい処理開始を表示
         self.log_text.clear()
@@ -245,8 +291,8 @@ class AutoSpeechExtractPage(QWidget):
             # セグメント情報をログに出力
             self._log_segment_info()
             
-            # FFmpegコマンドを実行
-            self._execute_ffmpeg_command()
+            # FFmpegコマンドを実行（クロスフェード設定を渡す）
+            self._execute_ffmpeg_command(crossfade_duration=self._crossfade_duration)
             
         except Exception as e:
             self._append_log(f"[エラー] SRTファイルの処理中にエラーが発生しました: {str(e)}")
@@ -348,7 +394,7 @@ class AutoSpeechExtractPage(QWidget):
                 self._log_segment_info()
                 
                 # FFmpegコマンドを実行
-                self._execute_ffmpeg_command()
+                self._execute_ffmpeg_command(crossfade_duration=self._crossfade_duration)
                 
             except Exception as e:
                 self._append_log(f"[エラー] 音声認識中にエラーが発生しました: {str(e)}")
@@ -357,20 +403,23 @@ class AutoSpeechExtractPage(QWidget):
         except Exception as e:
             self._append_log(f"[エラー] {str(e)}")
     
-    def _execute_ffmpeg_command(self):
+    def _execute_ffmpeg_command(self, crossfade_duration=0.0):
         """FFmpegコマンドを実行する"""
         try:
             self._append_log(f"\nセグメント抽出完了: {len(self.segments)}区間\nFFmpegコマンド生成中...")
             
-            # FFmpegコマンドを生成
-            ffmpeg_cmd = self.extractor.build_ffmpeg_commands(
+            # FFmpegコマンドを構築（クロスフェード設定を渡す）
+            commands = self.extractor.build_ffmpeg_commands(
                 self.file_path, 
                 self.segments, 
-                self.output_path
+                self.output_path, 
+                merge_gap_sec=self._merge_gap_sec,
+                crossfade_duration=crossfade_duration,
+                log_func=self._append_log
             )
             
             # build_ffmpeg_commandsが複数コマンドリストを返す場合に対応
-            cmds = ffmpeg_cmd
+            cmds = commands
             if isinstance(cmds, (list, tuple)) and len(cmds) > 0 and isinstance(cmds[0], list):
                 # コマンドリストのリスト（複数候補）
                 success = False
