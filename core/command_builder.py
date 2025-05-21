@@ -48,19 +48,64 @@ class CommandBuilder:
             ]
 
             # 2. 音声を抽出して補正
-            # オーディオフィルターの構築
-            if material_mode:
-                af = f"loudnorm=I=-18:LRA=11:TP={true_peak_limit}:linear=true:print_format=summary"
-            elif use_dynaudnorm:
-                af = (
-                    f"dynaudnorm=f=250:g=15:p=0.95:m=5:r=0.0:n=1," +
-                    f"loudnorm=I=-14:LRA=7:TP={true_peak_limit}:print_format=summary"
-                )
-            else:
-                af = f"loudnorm=I=-14:LRA=7:TP={true_peak_limit}:print_format=summary"
+            # 1回目のパスで解析のみ行い、loudnormのパラメータを取得
+            analyze_cmd = [
+                'ffmpeg',
+                '-y',
+                '-i', str(input_path),
+                '-vn',  # 映像を無効化
+                '-af', f'loudnorm=I=-18:TP={true_peak_limit}:LRA=11:print_format=json',
+                '-f', 'null',
+                'NUL' if os.name == 'nt' else '/dev/null'  # 出力先（OS依存）
+            ]
             
-            if add_limiter:
-                af += f",alimiter=limit={true_peak_limit}dB"
+            try:
+                # 1回目のパスを実行して解析結果を取得
+                result = subprocess.run(analyze_cmd, capture_output=True, text=True, check=True)
+                
+                # 標準エラーからJSONを抽出
+                import re
+                import json
+                json_match = re.search(r'({.*})', result.stderr, re.DOTALL)
+                if not json_match:
+                    raise ValueError("loudnormの解析結果を取得できませんでした")
+                
+                # JSONをパースして必要なパラメータを取得
+                analysis = json.loads(json_match.group(1))
+                input_i = analysis.get('input_i', 0)
+                input_tp = analysis.get('input_tp', 0)
+                input_lra = analysis.get('input_lra', 0)
+                input_thresh = analysis.get('input_thresh', 0)
+                
+                # 2回目のパスで使用するフィルタを構築
+                if material_mode:
+                    af = f"loudnorm=I=-18:LRA=11:TP={true_peak_limit}:linear=true:measured_I={input_i}:measured_TP={input_tp}:measured_LRA={input_lra}:measured_thresh={input_thresh}:print_format=summary"
+                elif use_dynaudnorm:
+                    af = (
+                        f"dynaudnorm=f=250:g=15:p=0.95:m=5:r=0.0:n=1," +
+                        f"loudnorm=I=-14:LRA=7:TP={true_peak_limit}:measured_I={input_i}:measured_TP={input_tp}:measured_LRA={input_lra}:measured_thresh={input_thresh}:print_format=summary"
+                    )
+                else:
+                    af = f"loudnorm=I=-14:LRA=7:TP={true_peak_limit}:measured_I={input_i}:measured_TP={input_tp}:measured_LRA={input_lra}:measured_thresh={input_thresh}:print_format=summary"
+                
+                if add_limiter:
+                    af += f",alimiter=limit={true_peak_limit}dB"
+                    
+            except Exception as e:
+                # 解析に失敗した場合は従来の方法にフォールバック
+                print(f"Warning: loudnorm analysis failed, falling back to default: {str(e)}")
+                if material_mode:
+                    af = f"loudnorm=I=-18:LRA=11:TP={true_peak_limit}:linear=true:print_format=summary"
+                elif use_dynaudnorm:
+                    af = (
+                        f"dynaudnorm=f=250:g=15:p=0.95:m=5:r=0.0:n=1," +
+                        f"loudnorm=I=-14:LRA=7:TP={true_peak_limit}:print_format=summary"
+                    )
+                else:
+                    af = f"loudnorm=I=-14:LRA=7:TP={true_peak_limit}:print_format=summary"
+                
+                if add_limiter:
+                    af += f",alimiter=limit={true_peak_limit}dB"
 
             audio_cmd = [
                 'ffmpeg',
@@ -176,9 +221,14 @@ class CommandBuilder:
                 "-i", concat_list.name,
                 "-c:v", "copy",  # ビデオコーデックをコピー
                 "-c:a", "copy",  # オーディオコーデックをコピー
-                "-map", "0:v",   # ビデオストリームのみマッピング
-                "-map", "0:a",   # オーディオストリームのみマッピング
+                "-map", "0:v:0", # 最初のビデオストリームをマッピング
+                "-map", "0:a:0", # 最初のオーディオストリームをマッピング
+                "-copyts",       # 入力タイムスタンプを保持
+                "-start_at_zero", # タイムスタンプを0から開始
+                "-avoid_negative_ts", "make_zero",  # 負のタイムスタンプを0に
+                "-fflags", "+genpts+igndts",  # タイムスタンプを再生成し、DTSを無視
                 "-async", "1",    # 音声同期を改善
+                "-movflags", "+faststart",  # ウェブ再生用に最適化
                 str(output_path)
             ]
         else:

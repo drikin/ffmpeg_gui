@@ -360,22 +360,44 @@ class SpeechSegmentExtractor:
                 curr = a_labels[i]
                 out = f"cf{i}"
                 
-                # クロスフェードが適用される区間をログに出力
+                # 現在のセグメントと前のセグメントの情報を取得
                 prev_seg_idx = i-1
                 curr_seg_idx = i
                 prev_start, prev_end = segments[prev_seg_idx]
                 curr_start, curr_end = segments[curr_seg_idx]
                 
-                # クロスフェードが適用される時間範囲を計算
-                fade_start = max(prev_start, prev_end - crossfade_duration)
-                fade_end = min(curr_start + crossfade_duration, curr_end)
+                # セグメントの長さを計算
+                prev_duration = prev_end - prev_start
+                curr_duration = curr_end - curr_start
                 
-                log(f"  セグメント {prev_seg_idx+1} と {curr_seg_idx+1} の間にクロスフェードを適用:")
-                log(f"    前のセグメント: {fade_start:.3f} - {prev_end:.3f} 秒")
-                log(f"    次のセグメント: {curr_start:.3f} - {fade_end:.3f} 秒")
-                log(f"    クロスフェード区間: {fade_start:.3f} - {fade_end:.3f} 秒 (長さ: {fade_end-fade_start:.3f}秒)")
+                # セグメント間の間隔を計算
+                gap = curr_start - prev_end
                 
-                afilters.append(f"[{prev}][{curr}]acrossfade=d={crossfade_duration}:c1=tri:c2=tri[{out}]")
+                # クロスフェード時間を調整（セグメントの長さに応じて）
+                adjusted_crossfade = min(
+                    crossfade_duration,
+                    prev_duration * 0.5,  # 前のセグメントの半分を超えない
+                    curr_duration * 0.5,   # 現在のセグメントの半分を超えない
+                    max(0, gap + min(prev_duration, curr_duration) * 0.5)  # 間隔を考慮
+                )
+                
+                # セグメントが短すぎるか間隔が狭い場合はクロスフェードをスキップ
+                if adjusted_crossfade < 0.01 or gap < -adjusted_crossfade * 0.5:
+                    log(f"  セグメント {prev_seg_idx+1} と {curr_seg_idx+1} の間はクロスフェードをスキップ（セグメントが短すぎるか間隔が狭いため）")
+                    afilters.append(f"{prev}{curr}concat=n=2:v=0:a=1[{out}]")
+                else:
+                    # クロスフェードが適用される時間範囲を計算
+                    fade_start = max(prev_start, prev_end - adjusted_crossfade)
+                    fade_end = min(curr_start + adjusted_crossfade, curr_end)
+                    
+                    log(f"  セグメント {prev_seg_idx+1} と {curr_seg_idx+1} の間にクロスフェードを適用:")
+                    log(f"    前のセグメント: {fade_start:.3f} - {prev_end:.3f} 秒 (長さ: {prev_duration:.3f}秒)")
+                    log(f"    次のセグメント: {curr_start:.3f} - {fade_end:.3f} 秒 (長さ: {curr_duration:.3f}秒)")
+                    log(f"    クロスフェード区間: {fade_start:.3f} - {fade_end:.3f} 秒 (長さ: {fade_end-fade_start:.3f}秒)")
+                    log(f"    調整済みクロスフェード時間: {adjusted_crossfade:.3f}秒")
+                    
+                    afilters.append(f"[{prev}][{curr}]acrossfade=d={adjusted_crossfade}:c1=tri:c2=tri[{out}]")
+                
                 prev = out
             aout = prev
         else:
@@ -406,13 +428,17 @@ class SpeechSegmentExtractor:
             for video_codec in ["h264_nvenc", "h264_qsv", "libx264"]:
                 cmd = [
                     "ffmpeg", "-y",
+                    "-copyts",  # 入力タイムスタンプを維持
+                    "-start_at_zero",  # タイムスタンプを0から開始
+                    "-avoid_negative_ts", "make_zero",  # 負のタイムスタンプを防ぐ
+                    "-fflags", "+genpts+igndts",  # タイムスタンプを再生成しDTSを無視
                     "-i", str(video_path),
                     "-filter_complex", filter_complex,
                     "-map", f"[{vout}]", "-map", f"[{aout}]",
                     "-c:v", video_codec,  # HWエンコーダ指定
                     "-c:a", "aac", "-b:a", "192k",
                     "-shortest",  # 映像・音声ストリーム長不一致時に短い方で切ることでmux不整合を防ぐ
-                    "-movflags", "faststart",  # QuickTime/Final Cut Pro互換性向上
+                    "-movflags", "+faststart",  # QuickTime/Final Cut Pro互換性向上
                     str(output_path)
                 ]
                 cmd_list.append(cmd)
@@ -420,6 +446,10 @@ class SpeechSegmentExtractor:
             # macOSはHWエンコーダ(hevc_videotoolbox)で出力し、Apple互換性を最大化
             cmd = [
                 "ffmpeg", "-y",
+                "-copyts",  # 入力タイムスタンプを維持
+                "-start_at_zero",  # タイムスタンプを0から開始
+                "-avoid_negative_ts", "make_zero",  # 負のタイムスタンプを防ぐ
+                "-fflags", "+genpts+igndts",  # タイムスタンプを再生成しDTSを無視
                 "-i", str(video_path),
                 "-filter_complex", filter_complex,
                 "-map", f"[{vout}]", "-map", f"[{aout}]",
@@ -429,7 +459,7 @@ class SpeechSegmentExtractor:
                 "-tag:v", "hvc1",       # QuickTime/Final Cut Pro互換タグ
                 "-c:a", "aac", "-b:a", "192k",
                 "-shortest",
-                "-movflags", "faststart",
+                "-movflags", "+faststart",  # Web再生用に最適化
                 str(output_path)
             ]
             cmd_list.append(cmd)
