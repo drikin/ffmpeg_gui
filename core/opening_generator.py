@@ -35,8 +35,10 @@ def generate_opening(text: str, output_path: str, log_func=None) -> bool:
     # エピソード表示にふさわしいサイズ・右下30pxオフセット・英語フォント指定
     fontsize = 64  # オープニングにふさわしい大きめサイズ
     offset = 30    # 右下からのオフセット
+    # 入力テキストをdrawtext用にエスケープ
+    esc_text = text.replace("'", r"\'").replace(':', r'\:')
     drawtext = (
-        f"drawtext=text='EPISODE 01':x=w-tw-{offset}:y=h-th-{offset}:fontsize={fontsize}:fontcolor=white:font='Arial':shadowcolor=black:shadowx=3:shadowy=3"
+        f"drawtext=text='{esc_text}':x=w-tw-{offset}:y=h-th-{offset}:fontsize={fontsize}:fontcolor=white:font='Arial':shadowcolor=black:shadowx=3:shadowy=3"
     )
     ffmpeg_cmd = [
         "ffmpeg", "-y",
